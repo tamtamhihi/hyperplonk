@@ -15,6 +15,7 @@ use crate::{
     witness::WitnessColumn,
 };
 
+#[derive(Debug)]
 pub struct MockCircuit<F: PrimeField> {
     pub public_inputs: Vec<F>,
     pub witnesses: Vec<WitnessColumn<F>>,

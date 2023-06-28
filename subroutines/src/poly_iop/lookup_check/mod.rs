@@ -108,8 +108,8 @@ where
         //      B(x) = 1 / (beta + f(x))
         let beta = transcript.get_and_append_challenge(b"beta")?;
 
-        let a_poly = compute_A(&m_poly, &t, &beta)?;
-        let b_poly = compute_B(&f, &beta)?;
+        let a_poly = compute_a(&m_poly, &t, &beta)?;
+        let b_poly = compute_b(&f, &beta)?;
 
         let a_comm = PCS::commit(pcs_param, &a_poly)?;
         let b_comm = PCS::commit(pcs_param, &b_poly)?;
@@ -192,6 +192,7 @@ where
 mod test {
     use super::LookupCheck;
     use super::LookupCheckSubClaim;
+    use crate::poly_iop::zero_check::ZeroCheckSubClaim;
     use crate::{
         pcs::{prelude::MultilinearKzgPCS, PolynomialCommitmentScheme},
         poly_iop::{errors::PolyIOPErrors, PolyIOP},
@@ -199,10 +200,77 @@ mod test {
     use arithmetic::VPAuxInfo;
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_ec::pairing::Pairing;
+    use ark_ff::PrimeField;
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
     use ark_std::test_rng;
+    
     use std::marker::PhantomData;
     use std::sync::Arc;
+
+    // A(x) = m(x) / (beta + t(x))
+    // B(x) = 1 / (beta + f())
+    fn check_a_b<F>(
+        a_poly: &Arc<DenseMultilinearExtension<F>>,
+        b_poly: &Arc<DenseMultilinearExtension<F>>,
+        t: &Arc<DenseMultilinearExtension<F>>,
+        f: &Arc<DenseMultilinearExtension<F>>,
+        m_poly: &Arc<DenseMultilinearExtension<F>>,
+        beta: F,
+    ) where
+        F: PrimeField,
+    {
+        let mut flag = true;
+        assert!(a_poly.num_vars == b_poly.num_vars,
+            "A and B must have the same num vars");
+
+        let num_vars = a_poly.num_vars;
+        for i in 0..1 << num_vars {
+
+            // check A eval at index i
+            let nom_a = m_poly.evaluations[i];
+            let denom_a = beta + t.evaluations[i];
+            if a_poly.evaluations[i] * denom_a != nom_a {
+                flag = false;
+                break;
+            }
+
+            // check B eval at index i
+            let nom_b = F::one();
+            let denom_b = beta + f.evaluations[i];
+            if b_poly.evaluations[i] * denom_b != nom_b {
+                flag = false;
+                break;
+            }
+        }
+        assert!(flag);
+    }
+
+    // p + alpha * q = 0
+    fn check_p_q<F>(
+        zc_subclaim: &ZeroCheckSubClaim<F>,
+        a_poly: &Arc<DenseMultilinearExtension<F>>,
+        b_poly: &Arc<DenseMultilinearExtension<F>>,
+        t: &Arc<DenseMultilinearExtension<F>>,
+        f: &Arc<DenseMultilinearExtension<F>>,
+        m_poly: &Arc<DenseMultilinearExtension<F>>,
+        beta: F,
+        alpha: F
+    ) where 
+        F: PrimeField, 
+    {
+        let point = &zc_subclaim.point;
+
+        // p(x) = A(x) * (beta + t(x)) - m(x)
+        let p_at_point = 
+            a_poly.evaluate(point).unwrap() * (beta + t.evaluate(point).unwrap()) - m_poly.evaluate(point).unwrap();
+        
+        // q(x) = B(x) * (beta + f(x)) - 1
+        let q_at_point = 
+            b_poly.evaluate(point).unwrap() * (beta + f.evaluate(point).unwrap()) - F::one();
+        
+        assert!(p_at_point + alpha * q_at_point == zc_subclaim.expected_evaluation,
+            "p and q does not pass zero-check");
+    }
 
     fn test_lookup_check_helper<E, PCS>(
         f: &Arc<DenseMultilinearExtension<E::ScalarField>>,
@@ -220,23 +288,31 @@ mod test {
         let mut transcript = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::init_transcript();
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
-        let (proof, m_poly, a_poly, b_poly) =
-            <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::prove(
+        let (proof, 
+            m_poly, 
+            a_poly, 
+            b_poly
+        ) = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::prove(
                 pcs_param,
                 f,
                 t,
                 &mut transcript,
             )?;
+        
 
         // 2) Verify the proof
         let mut transcript = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::init_transcript();
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
-
+            
+        // max_degree = 3, because p(A,m,t) + alpha * q(B,f)
+        //      As alpha is also expressed as a mle => max_degree = 3
         let zc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
             max_degree: 3,
             num_variables: f.num_vars(),
             phantom: PhantomData::default(),
         };
+
+        // max_degree = 1, because A - B has a max degree of each variable is 1
         let sc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
             max_degree: 1,
             num_variables: f.num_vars(),
@@ -244,7 +320,7 @@ mod test {
         };
 
         let LookupCheckSubClaim {
-            zero_check_sub_claim,
+            zero_check_sub_claim, // p + alpha*q = 0
             sum_check_sub_claim,
             challenges,
         } = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::verify(
@@ -253,13 +329,28 @@ mod test {
             &sc_aux_info,
             &mut transcript,
         )?;
+        
+        check_a_b::<E::ScalarField>(&a_poly, &b_poly, &t, &f, &m_poly,  challenges.0);
+
+        check_p_q(
+            &zero_check_sub_claim, 
+            &a_poly, 
+            &b_poly, 
+            &t, 
+            &f, 
+            &m_poly, 
+            challenges.0, 
+            challenges.1);
 
         assert_eq!(
             a_poly.evaluate(&sum_check_sub_claim.point).unwrap()
                 - b_poly.evaluate(&sum_check_sub_claim.point).unwrap(),
             sum_check_sub_claim.expected_evaluation,
-            "sumcheck on A-B not satisfied",
+            "sumcheck on A - B not satisfied",
         );
+
+
+        
 
         // zero check: 2 ham p(A,m,t), q(B,f)
         // sum check: l = a - b

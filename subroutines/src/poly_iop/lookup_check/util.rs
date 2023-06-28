@@ -51,7 +51,7 @@ pub(super) fn compute_multiplicity_poly<F: PrimeField>(
 }
 
 /// Calculate A(x) = m(x) / (beta + t(x)).
-pub(super) fn compute_A<F: PrimeField>(
+pub(super) fn compute_a<F: PrimeField>(
     m: &Arc<DenseMultilinearExtension<F>>,
     t: &Arc<DenseMultilinearExtension<F>>,
     beta: &F,
@@ -79,7 +79,7 @@ pub(super) fn compute_A<F: PrimeField>(
 }
 
 /// Calculate B(x) = 1 / (beta + f())
-pub(super) fn compute_B<F: PrimeField>(
+pub(super) fn compute_b<F: PrimeField>(
     f: &Arc<DenseMultilinearExtension<F>>,
     beta: &F,
 ) -> Result<Arc<DenseMultilinearExtension<F>>, PolyIOPErrors> {

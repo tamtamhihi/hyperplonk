@@ -15,6 +15,7 @@ use std::sync::Arc;
 use subroutines::{
     pcs::PolynomialCommitmentScheme,
     poly_iop::prelude::{PermutationCheck, ZeroCheck},
+    LookupCheck,
 };
 
 /// The proof for the HyperPlonk PolyIOP, consists of the following:
@@ -23,10 +24,11 @@ use subroutines::{
 ///   - the zero-check proof for checking custom gate-satisfiability
 ///   - the permutation-check proof for checking the copy constraints
 #[derive(Clone, Debug, PartialEq)]
-pub struct HyperPlonkProof<E, PC, PCS>
+pub struct HyperPlonkProof<E, PC, LC, PCS>
 where
     E: Pairing,
     PC: PermutationCheck<E, PCS>,
+    LC: LookupCheck<E, PCS>,
     PCS: PolynomialCommitmentScheme<E>,
 {
     // PCS commit for witnesses
@@ -39,6 +41,9 @@ where
     pub zero_check_proof: <PC as ZeroCheck<E::ScalarField>>::ZeroCheckProof,
     // the permutation check proof for copy constraints
     pub perm_check_proof: PC::PermutationProof,
+
+    pub lookup_check_proof: LC::LookupCheckProof,
+    pub lookup_zc_proof: <LC as ZeroCheck<E::ScalarField>>::ZeroCheckProof,
 }
 
 /// The HyperPlonk instance parameters, consists of the following:
@@ -55,6 +60,8 @@ pub struct HyperPlonkParams {
     pub num_pub_input: usize,
     /// customized gate function
     pub gate_func: CustomizedGates,
+    /// lookup gate functions, each corresponding to 1 table
+    pub lk_gate_func: CustomizedGates,
 }
 
 impl HyperPlonkParams {
@@ -71,6 +78,11 @@ impl HyperPlonkParams {
     /// number of witness columns
     pub fn num_witness_columns(&self) -> usize {
         self.gate_func.num_witness_columns()
+    }
+
+    /// number of lookup selector columns
+    pub fn num_lk_selector_columns(&self) -> usize {
+        self.lk_gate_func.num_selector_columns()
     }
 
     /// evaluate the identical polynomial
@@ -103,6 +115,8 @@ pub struct HyperPlonkIndex<F: PrimeField> {
     pub params: HyperPlonkParams,
     pub permutation: Vec<F>,
     pub selectors: Vec<SelectorColumn<F>>,
+    pub lk_selectors: Vec<SelectorColumn<F>>,
+    pub table: Vec<F>,
 }
 
 impl<F: PrimeField> HyperPlonkIndex<F> {
@@ -131,14 +145,25 @@ impl<F: PrimeField> HyperPlonkIndex<F> {
 pub struct HyperPlonkProvingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> {
     /// Hyperplonk instance parameters
     pub params: HyperPlonkParams,
+
     /// The preprocessed permutation polynomials
     pub permutation_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
     /// The preprocessed selector polynomials
     pub selector_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
-    /// Commitments to the preprocessed selector polynomials
-    pub selector_commitments: Vec<PCS::Commitment>,
+    /// The preprocessed lookup selector polynomials
+    pub lk_selector_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
+    /// The preprocessed table polynomial
+    pub table_oracle: Arc<DenseMultilinearExtension<E::ScalarField>>,
+
     /// Commitments to the preprocessed permutation polynomials
     pub permutation_commitments: Vec<PCS::Commitment>,
+    /// Commitments to the preprocessed selector polynomials
+    pub selector_commitments: Vec<PCS::Commitment>,
+    /// Commitments to the preprocessed lookup selector polynomials
+    pub lk_selector_commitments: Vec<PCS::Commitment>,
+    /// Commitments to the preprocessed table polynomial
+    pub table_commitment: PCS::Commitment,
+
     /// The parameters for PCS commitment
     pub pcs_param: PCS::ProverParam,
 }
@@ -153,8 +178,12 @@ pub struct HyperPlonkVerifyingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>
     pub params: HyperPlonkParams,
     /// The parameters for PCS commitment
     pub pcs_param: PCS::VerifierParam,
-    /// A commitment to the preprocessed selector polynomials
-    pub selector_commitments: Vec<PCS::Commitment>,
     /// Permutation oracles' commitments
     pub perm_commitments: Vec<PCS::Commitment>,
+    /// A commitment to the preprocessed selector polynomials
+    pub selector_commitments: Vec<PCS::Commitment>,
+    /// A commitment to the preprocessed lookup selector polynomials
+    pub lk_selector_commitments: Vec<PCS::Commitment>,
+    /// A commitment to the preprocessed table polynomial
+    pub table_commitment: PCS::Commitment,
 }

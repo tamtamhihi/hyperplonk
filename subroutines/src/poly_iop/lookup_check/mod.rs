@@ -6,7 +6,7 @@ use ark_poly::DenseMultilinearExtension;
 use std::ops::Add;
 use std::sync::Arc;
 use transcript::IOPTranscript;
-// git commit --no-verify -m ".."
+
 mod util;
 use self::util::*;
 
@@ -20,6 +20,7 @@ where
 
     fn init_transcript() -> Self::Transcript;
 
+    #[allow(clippy::type_complexity)]
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
@@ -99,7 +100,7 @@ where
         let f_comm = PCS::commit(pcs_param, f)?;
         transcript.append_serializable_element(b"f_comm", &f_comm)?;
 
-        let m_poly = compute_multiplicity_poly(&f, &t)?;
+        let m_poly = compute_multiplicity_poly(f, t)?;
         let m_comm = PCS::commit(pcs_param, &m_poly)?;
         transcript.append_serializable_element(b"m_comm", &m_comm)?;
 
@@ -108,8 +109,8 @@ where
         //      B(x) = 1 / (beta + f(x))
         let beta = transcript.get_and_append_challenge(b"beta")?;
 
-        let a_poly = compute_a(&m_poly, &t, &beta)?;
-        let b_poly = compute_b(&f, &beta)?;
+        let a_poly = compute_a(&m_poly, t, &beta)?;
+        let b_poly = compute_b(f, &beta)?;
 
         let a_comm = PCS::commit(pcs_param, &a_poly)?;
         let b_comm = PCS::commit(pcs_param, &b_poly)?;
@@ -118,8 +119,8 @@ where
         transcript.append_serializable_element(b"b_comm", &b_comm)?;
 
         // 3) Build virtual polynomial p and q
-        let mut p = build_p_virtual(&a_poly, &t, &m_poly, &beta)?;
-        let mut q = build_q_virtual(&b_poly, &f, &beta)?;
+        let mut p = build_p_virtual(&a_poly, t, &m_poly, &beta)?;
+        let mut q = build_q_virtual(&b_poly, f, &beta)?;
 
         // 4) Batch ZeroCheck for p and q
         let alpha = transcript.get_and_append_challenge(b"alpha")?;
@@ -203,7 +204,7 @@ mod test {
     use ark_ff::PrimeField;
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
     use ark_std::test_rng;
-    
+
     use std::marker::PhantomData;
     use std::sync::Arc;
 
@@ -220,12 +221,13 @@ mod test {
         F: PrimeField,
     {
         let mut flag = true;
-        assert!(a_poly.num_vars == b_poly.num_vars,
-            "A and B must have the same num vars");
+        assert!(
+            a_poly.num_vars == b_poly.num_vars,
+            "A and B must have the same num vars"
+        );
 
         let num_vars = a_poly.num_vars;
         for i in 0..1 << num_vars {
-
             // check A eval at index i
             let nom_a = m_poly.evaluations[i];
             let denom_a = beta + t.evaluations[i];
@@ -246,6 +248,7 @@ mod test {
     }
 
     // p + alpha * q = 0
+    #[allow(clippy::too_many_arguments)]
     fn check_p_q<F>(
         zc_subclaim: &ZeroCheckSubClaim<F>,
         a_poly: &Arc<DenseMultilinearExtension<F>>,
@@ -254,22 +257,24 @@ mod test {
         f: &Arc<DenseMultilinearExtension<F>>,
         m_poly: &Arc<DenseMultilinearExtension<F>>,
         beta: F,
-        alpha: F
-    ) where 
-        F: PrimeField, 
+        alpha: F,
+    ) where
+        F: PrimeField,
     {
         let point = &zc_subclaim.point;
 
         // p(x) = A(x) * (beta + t(x)) - m(x)
-        let p_at_point = 
-            a_poly.evaluate(point).unwrap() * (beta + t.evaluate(point).unwrap()) - m_poly.evaluate(point).unwrap();
-        
+        let p_at_point = a_poly.evaluate(point).unwrap() * (beta + t.evaluate(point).unwrap())
+            - m_poly.evaluate(point).unwrap();
+
         // q(x) = B(x) * (beta + f(x)) - 1
-        let q_at_point = 
+        let q_at_point =
             b_poly.evaluate(point).unwrap() * (beta + f.evaluate(point).unwrap()) - F::one();
-        
-        assert!(p_at_point + alpha * q_at_point == zc_subclaim.expected_evaluation,
-            "p and q does not pass zero-check");
+
+        assert!(
+            p_at_point + alpha * q_at_point == zc_subclaim.expected_evaluation,
+            "p and q does not pass zero-check"
+        );
     }
 
     fn test_lookup_check_helper<E, PCS>(
@@ -288,22 +293,18 @@ mod test {
         let mut transcript = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::init_transcript();
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
-        let (proof, 
-            m_poly, 
-            a_poly, 
-            b_poly
-        ) = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::prove(
+        let (proof, m_poly, a_poly, b_poly) =
+            <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::prove(
                 pcs_param,
                 f,
                 t,
                 &mut transcript,
             )?;
-        
 
         // 2) Verify the proof
         let mut transcript = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::init_transcript();
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
-            
+
         // max_degree = 3, because p(A,m,t) + alpha * q(B,f)
         //      As alpha is also expressed as a mle => max_degree = 3
         let zc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
@@ -329,18 +330,19 @@ mod test {
             &sc_aux_info,
             &mut transcript,
         )?;
-        
-        check_a_b::<E::ScalarField>(&a_poly, &b_poly, &t, &f, &m_poly,  challenges.0);
+
+        check_a_b::<E::ScalarField>(&a_poly, &b_poly, &t, &f, &m_poly, challenges.0);
 
         check_p_q(
-            &zero_check_sub_claim, 
-            &a_poly, 
-            &b_poly, 
-            &t, 
-            &f, 
-            &m_poly, 
-            challenges.0, 
-            challenges.1);
+            &zero_check_sub_claim,
+            &a_poly,
+            &b_poly,
+            t,
+            f,
+            &m_poly,
+            challenges.0,
+            challenges.1,
+        );
 
         assert_eq!(
             a_poly.evaluate(&sum_check_sub_claim.point).unwrap()
@@ -348,33 +350,6 @@ mod test {
             sum_check_sub_claim.expected_evaluation,
             "sumcheck on A - B not satisfied",
         );
-
-
-        
-
-        // zero check: 2 ham p(A,m,t), q(B,f)
-        // sum check: l = a - b
-
-        // A(x) - B(x) = 0
-        // m(x) / (beta + t(x)) - 1 / (beta + f(x)) = 0
-        // Check zc subclaim
-        // poly(x) == 0 for all x
-        //      where poly = p - alpha*q
-        //          p(x) = A(x) * (beta + t(x)) - m(x)
-        //          q(x) = B(x) * (beta + f(x)) - 1
-        // Batch openning for A(x), B(x), t(x), f(x) commitments
-        // assert!(poly.evaluate(zero_check_sub_claim.point)? == zero_check_sub_claim.expected_evaluation,
-        //     "wrong zero-check subclaim"
-        // );
-
-        // Check sc subclaim
-        // sum_{x \in B\mu} poly = 0
-        // where poly = L(x) = A(x) - B(x) == 0 for all x
-        // Batch openning for A(x), B(x) commitments
-        // assert!(
-        //     poly.evaluate(&sum_check_sub_claim.point).unwrap() == sum_check_sub_claim.expected_evaluation,
-        //     "wrong sum-check subclaim"
-        // );
 
         Ok(())
     }
@@ -395,7 +370,6 @@ mod test {
 
         // 2) Generate lookups
         let lookups = (0..half_n)
-            .into_iter()
             .map(|i| vec![table[i]; 2])
             .collect::<Vec<_>>()
             .concat();

@@ -127,6 +127,22 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         }
     }
 
+    /// Convert virtual polynomial to MLE 
+    pub fn to_mle(
+        &self,
+    ) -> Result<Arc<DenseMultilinearExtension<F>>, ArithErrors>{
+        let num_vars = self.aux_info.num_variables;
+        
+        let evaluations = (0..1 << num_vars)
+            .map(|num| {
+                let point = bit_decompose(num, num_vars).iter()
+                    .map(|b| if *b {F::one()} else {F::zero()}).collect::<Vec<_>>();
+                self.evaluate(&point)
+            }).collect::<Result<Vec<_>,_>>()?;
+        
+        Ok(Arc::new(DenseMultilinearExtension::from_evaluations_vec(num_vars, evaluations)))
+    }
+
     /// Add a product of list of multilinear extensions to self
     /// Returns an error if the list is empty, or the MLE has a different
     /// `num_vars` from self.

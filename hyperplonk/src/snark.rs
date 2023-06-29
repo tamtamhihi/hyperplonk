@@ -811,10 +811,10 @@ where
         //-- p(A,t,m) + alpha * q(B,f) for zero check
         let lookup_check_zc_point = lookup_check_subclaim.zero_check_subclaim.point;
         comms.push(proof.lookup_check_proof.a_comm); // for A
-        comms.push(proof.lookup_check_proof.m_comm); // for m
-        comms.push(vk.table_commitment); // for t
         comms.push(proof.lookup_check_proof.b_comm); // for B
         comms.push(proof.lookup_check_proof.f_comm); // for f
+        comms.push(proof.lookup_check_proof.m_comm); // for m
+        comms.push(vk.table_commitment); // for t
         points.append(&mut vec![lookup_check_zc_point; 5]);
 
         //-- f_lk_mle, q_lk, w for lookup ZC check
@@ -953,10 +953,10 @@ mod tests {
             &[w1.clone(), w2.clone()],
         )?;
 
-        let _verify =
-            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::verify(
-                &vk, &pi.0, &proof,
-            )?;
+        let verify = <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::verify(
+            &vk, &pi.0, &proof,
+        )?;
+        assert!(verify, "Proof failed SNARK verify");
 
         // bad path 1: wrong permutation
         let rand_perm: Vec<E::ScalarField> = random_permutation(nv, num_witnesses, &mut rng);

@@ -108,7 +108,7 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for UnivariateKzgPCS<E> {
         let msm_time = start_timer!(|| "MSM to compute commitment to plaintext poly");
         let commitment = E::G1::msm_unchecked(
             &prover_param.powers_of_g[num_leading_zeros..],
-            &plain_coeffs,
+            plain_coeffs,
         )
         .into_affine();
         end_timer!(msm_time);
@@ -136,7 +136,7 @@ impl<E: Pairing> PolynomialCommitmentScheme<E> for UnivariateKzgPCS<E> {
 
         let proof = E::G1::msm_unchecked(
             &prover_param.borrow().powers_of_g[num_leading_zeros..],
-            &witness_coeffs,
+            witness_coeffs,
         )
         .into_affine();
 

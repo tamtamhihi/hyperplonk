@@ -100,13 +100,16 @@ impl<F: PrimeField> MockCircuit<F> {
             num_constraints,
             num_pub_input: public_inputs.len(),
             gate_func: gate.clone(),
+            lk_gate_func: gate.clone(),
         };
 
         let permutation = identity_permutation(merged_nv as usize, 1);
         let index = HyperPlonkIndex {
             params,
             permutation,
-            selectors,
+            selectors: selectors.clone(),
+            lk_selectors: selectors,
+            table: vec![],
         };
 
         Self {

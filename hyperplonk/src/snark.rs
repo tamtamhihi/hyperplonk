@@ -100,7 +100,7 @@ where
 
         let table_oracle = Arc::new(DenseMultilinearExtension::from_evaluations_vec(
             num_vars,
-            index.table,
+            index.table.clone(),
         ));
 
         let table_commitment = PCS::commit(&pcs_prover_param, &table_oracle)?;
@@ -115,7 +115,7 @@ where
                 permutation_commitments: perm_comms.clone(),
                 selector_commitments: selector_commitments.clone(),
                 lk_selector_commitments: lk_selector_commitments.clone(),
-                table_commitment: table_commitment.clone(),
+                table_commitment,
                 pcs_param: pcs_prover_param,
             },
             Self::VerifyingKey {
@@ -382,7 +382,7 @@ where
             &mut transcript,
         )?;
 
-        f_lk.add_mle_list(vec![f_lk_mle], -E::ScalarField::one());
+        f_lk.add_mle_list(vec![Arc::clone(&f_lk_mle)], -E::ScalarField::one())?;
         let lookup_zc_proof = <Self as ZeroCheck<E::ScalarField>>::prove(&f_lk, &mut transcript)?;
 
         //--  5.1 Openings of a,b for sumcheck inside lookup check
@@ -409,7 +409,7 @@ where
             &lookup_check_proof.zc_proof.point,
         );
         pcs_acc.insert_poly_and_points(
-            &f_lk_mle,
+            &Arc::clone(&f_lk_mle),
             &lookup_check_proof.f_comm,
             &lookup_check_proof.zc_proof.point,
         );
@@ -425,19 +425,17 @@ where
         );
 
         //-- 5.3 Openings of f_lk_mle, q_lk_0..., w_0... for zero check of (f_lk - f_lk_mle)
-        let lk_zc_point = lookup_zc_proof.point;
+        let lk_zc_point = &lookup_zc_proof.point;
 
-        pcs_acc.insert_poly_and_points(&f_lk_mle, &lookup_check_proof.f_comm, &lk_zc_point);
+        pcs_acc.insert_poly_and_points(&f_lk_mle, &lookup_check_proof.f_comm, lk_zc_point);
         pk.lk_selector_oracles
             .iter()
-            .zip(pk.lk_selector_commitments)
-            .map(|(oracle, comm)| pcs_acc.insert_poly_and_points(oracle, &comm, &lk_zc_point))
-            .collect::<Vec<_>>();
+            .zip(pk.lk_selector_commitments.iter())
+            .for_each(|(oracle, comm)| pcs_acc.insert_poly_and_points(oracle, comm, lk_zc_point));
         witness_polys
             .iter()
-            .zip(witness_commits)
-            .map(|(oracle, comm)| pcs_acc.insert_poly_and_points(oracle, &comm, &lk_zc_point))
-            .collect::<Vec<_>>();
+            .zip(witness_commits.iter())
+            .for_each(|(oracle, comm)| pcs_acc.insert_poly_and_points(oracle, comm, lk_zc_point));
 
         // =======================================================================
         // 6. deferred batch opening
@@ -526,33 +524,21 @@ where
         }
 
         // Extract evaluations from openings
-        let mut batch_evals = proof.batch_openings.f_i_eval_at_point_i.iter();
-        let prod_evals = take_next_n_evals(4, batch_evals);
-        let frac_evals = take_next_n_evals(3, batch_evals);
-        let perm_evals = take_next_n_evals(num_witnesses, batch_evals);
-        let witness_perm_evals = take_next_n_evals(num_witnesses, batch_evals);
-        let witness_gate_evals = take_next_n_evals(num_witnesses, batch_evals);
-        let selector_evals = take_next_n_evals(num_selectors, batch_evals);
-        let pi_eval = take_next_n_evals(1, batch_evals)[0];
+        let batch_evals = &proof.batch_openings.f_i_eval_at_point_i;
+        let mut pointer = 0;
+        let prod_evals = take_next_n(4, batch_evals, &mut pointer);
+        let frac_evals = take_next_n(3, batch_evals, &mut pointer);
+        let perm_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
+        let witness_perm_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
+        let witness_gate_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
+        let selector_evals = take_next_n(num_selectors, batch_evals, &mut pointer);
+        let pi_eval = take_next_n(1, batch_evals, &mut pointer)[0];
 
-        // Extract evaluations from lookup openings
-        let lk_ab_evals = take_next_n_evals(2, batch_evals);
-        let lk_zc_evals = take_next_n_evals(5, batch_evals);
-        let lk_mle_eval = take_next_n_evals(1, batch_evals)[0];
-        let lk_selector_evals = take_next_n_evals(num_lk_selectors, batch_evals);
-        let lk_witness_evals = take_next_n_evals(num_witnesses, batch_evals);
-
-        //let prod_evals = &proof.batch_openings.f_i_eval_at_point_i[0..4];
-        //let frac_evals = &proof.batch_openings.f_i_eval_at_point_i[4..7];
-        //let perm_evals = &proof.batch_openings.f_i_eval_at_point_i[7..7 + num_witnesses];
-        //let witness_perm_evals =
-        //    &proof.batch_openings.f_i_eval_at_point_i[7 + num_witnesses..7 + 2 * num_witnesses];
-        //let witness_gate_evals =
-        //    &proof.batch_openings.f_i_eval_at_point_i[7 + 2 * num_witnesses..7 + 3 * num_witnesses];
-        //let selector_evals = &proof.batch_openings.f_i_eval_at_point_i
-        //    [7 + 3 * num_witnesses..7 + 3 * num_witnesses + num_selectors];
-        //let pi_eval =
-        //    &proof.batch_openings.f_i_eval_at_point_i[7 + 3 * num_witnesses + num_selectors];
+        let lk_ab_evals = take_next_n(2, batch_evals, &mut pointer);
+        let lk_zc_evals = take_next_n(5, batch_evals, &mut pointer);
+        let lk_mle_eval = take_next_n(1, batch_evals, &mut pointer)[0];
+        let lk_selector_evals = take_next_n(num_lk_selectors, batch_evals, &mut pointer);
+        let lk_witness_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
 
         // =======================================================================
         // 1. Verify zero_check_proof on
@@ -650,6 +636,22 @@ where
         }
 
         end_timer!(step);
+
+        // Public input consistency checks
+        //   - pi_poly(r_pi) where r_pi is sampled from transcript
+        let r_pi = transcript.get_and_append_challenge_vectors(b"r_pi", ell)?;
+
+        // check public evaluation
+        let pi_step = start_timer!(|| "check public evaluation");
+        let pi_poly = DenseMultilinearExtension::from_evaluations_slice(ell, pub_input);
+        let expect_pi_eval = evaluate_opt(&pi_poly, &r_pi[..]);
+        if expect_pi_eval != pi_eval {
+            return Err(HyperPlonkErrors::InvalidProver(format!(
+                "Public input eval mismatch: got {}, expect {}",
+                pi_eval, expect_pi_eval,
+            )));
+        }
+        end_timer!(pi_step);
 
         // =======================================================================
         // 3. Verify lookup_check_proof
@@ -792,18 +794,7 @@ where
 
         // - 4.4. public input consistency checks
         //   - pi_poly(r_pi) where r_pi is sampled from transcript
-        let r_pi = transcript.get_and_append_challenge_vectors(b"r_pi", ell)?;
 
-        // check public evaluation
-        let pi_step = start_timer!(|| "check public evaluation");
-        let pi_poly = DenseMultilinearExtension::from_evaluations_slice(ell, pub_input);
-        let expect_pi_eval = evaluate_opt(&pi_poly, &r_pi[..]);
-        if expect_pi_eval != pi_eval {
-            return Err(HyperPlonkErrors::InvalidProver(format!(
-                "Public input eval mismatch: got {}, expect {}",
-                pi_eval, expect_pi_eval,
-            )));
-        }
         let r_pi_padded = [r_pi, vec![E::ScalarField::zero(); num_vars - ell]].concat();
 
         comms.push(proof.witness_commits[0]);
@@ -811,20 +802,20 @@ where
 
         // 5. Openings for lookup check + lookup ZC check
 
-        //-- a, b for sum check
+        //-- A, B for sum check
         let lookup_check_sc_point = lookup_check_subclaim.sum_check_subclaim.point;
         comms.push(proof.lookup_check_proof.a_comm);
         comms.push(proof.lookup_check_proof.b_comm);
-        points.append(&mut vec![lookup_check_sc_point.clone(); 2]);
+        points.append(&mut vec![lookup_check_sc_point; 2]);
 
         //-- p(A,t,m) + alpha * q(B,f) for zero check
         let lookup_check_zc_point = lookup_check_subclaim.zero_check_subclaim.point;
-        comms.push(proof.lookup_check_proof.a_comm); // for a
+        comms.push(proof.lookup_check_proof.a_comm); // for A
         comms.push(proof.lookup_check_proof.m_comm); // for m
         comms.push(vk.table_commitment); // for t
-        comms.push(proof.lookup_check_proof.b_comm); // for b
+        comms.push(proof.lookup_check_proof.b_comm); // for B
         comms.push(proof.lookup_check_proof.f_comm); // for f
-        points.append(&mut vec![lookup_check_zc_point.clone(); 5]);
+        points.append(&mut vec![lookup_check_zc_point; 5]);
 
         //-- f_lk_mle, q_lk, w for lookup ZC check
         let lk_zc_point = lookup_zc_subclaim.point;
@@ -835,13 +826,9 @@ where
         for &wcomm in proof.witness_commits.iter() {
             comms.push(wcomm);
         }
-        points.append(&mut vec![
-            lk_zc_point.clone();
-            1 + num_lk_selectors + num_witnesses
-        ]);
+        points.append(&mut vec![lk_zc_point; 1 + num_lk_selectors + num_witnesses]);
 
         assert_eq!(comms.len(), proof.batch_openings.f_i_eval_at_point_i.len());
-        end_timer!(pi_step);
 
         end_timer!(step);
         let step = start_timer!(|| "PCS batch verify");
@@ -929,8 +916,11 @@ mod tests {
             params,
             permutation,
             selectors: vec![q1.clone()],
-            lk_selectors: vec![q1.clone(), q1.clone()],
-            table: (0..256).map(|i| E::ScalarField::from(i as u128)).collect(),
+            lk_selectors: vec![q1.clone(), q1],
+            table: [0, 2, 34, 246]
+                .iter()
+                .map(|i| E::ScalarField::from(*i as u128))
+                .collect(),
         };
 
         // generate pk and vks

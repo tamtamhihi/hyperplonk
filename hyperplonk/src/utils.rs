@@ -12,7 +12,7 @@ use arithmetic::{evaluate_opt, VirtualPolynomial};
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_poly::DenseMultilinearExtension;
-use std::{borrow::Borrow, slice::Iter, sync::Arc};
+use std::{borrow::Borrow, sync::Arc};
 use subroutines::pcs::{prelude::Commitment, PolynomialCommitmentScheme};
 use transcript::IOPTranscript;
 
@@ -292,10 +292,10 @@ pub(crate) fn eval_perm_gate<F: PrimeField>(
     Ok(res)
 }
 
-pub(crate) fn take_next_n_evals<F>(n: usize, mut batch_evals: Iter<F>) -> &[F] {
-    &(0..n)
-        .map(|_| *batch_evals.next().unwrap())
-        .collect::<Vec<_>>()
+pub(crate) fn take_next_n<'a, F>(n: usize, v: &'a [F], pointer: &mut usize) -> &'a [F] {
+    let res = &v[*pointer..*pointer + n];
+    *pointer += n;
+    res
 }
 
 #[cfg(test)]

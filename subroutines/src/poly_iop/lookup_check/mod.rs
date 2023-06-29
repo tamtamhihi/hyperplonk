@@ -53,7 +53,7 @@ pub struct LookupCheckSubClaim<F: PrimeField, ZC: ZeroCheck<F>> {
     pub sum_check_subclaim: <ZC as SumCheck<F>>::SumCheckSubClaim,
 
     /// Challenges beta and alpha
-    pub challenges: (F, F)
+    pub challenges: (F, F),
 }
 
 pub struct LookupCheckProof<E, PCS, ZC>
@@ -331,7 +331,7 @@ mod test {
             &mut transcript,
         )?;
 
-        check_a_b::<E::ScalarField>(&a_poly, &b_poly, &t, &f, &m_poly, challenges.0);
+        check_a_b::<E::ScalarField>(&a_poly, &b_poly, t, f, &m_poly, challenges.0);
 
         check_p_q(
             &zero_check_sub_claim,

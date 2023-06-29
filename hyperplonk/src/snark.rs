@@ -675,12 +675,9 @@ where
 
         // Verify sumcheck for A - B
         {
-            let [a, b] = lk_ab_evals;
-            if *a - *b
-                != lookup_check_subclaim
-                    .sum_check_sub_claim
-                    .expected_evaluation
-            {
+            let a_eval = lk_ab_evals[0];
+            let b_eval = lk_ab_evals[1];
+            if a_eval - b_eval != lookup_check_subclaim.sum_check_subclaim.expected_evaluation {
                 return Err(HyperPlonkErrors::InvalidProof(
                     "In lookup check, sumcheck evaluation for A-B failed".to_string(),
                 ));
@@ -689,12 +686,19 @@ where
 
         // Verify zero check for p(A, m, t, beta) + alpha*q(f, B, beta)
         {
-            let [a, b, f, m, t] = lk_zc_evals;
+            let a_eval = lk_zc_evals[0];
+            let b_eval = lk_zc_evals[1];
+            let f_eval = lk_zc_evals[2];
+            let m_eval = lk_zc_evals[3];
+            let t_eval = lk_zc_evals[4];
+
             let beta = lookup_check_subclaim.challenges.0;
             let alpha = lookup_check_subclaim.challenges.1;
-            if (beta + t) * a - m + alpha * ((beta + f) * b - E::ScalarField::one())
+
+            if a_eval * (beta + t_eval) - m_eval
+                + alpha * ((beta + f_eval) * b_eval - E::ScalarField::one())
                 != lookup_check_subclaim
-                    .zero_check_sub_claim
+                    .zero_check_subclaim
                     .expected_evaluation
             {
                 return Err(HyperPlonkErrors::InvalidProof(
@@ -704,19 +708,18 @@ where
         }
 
         // Verify zerocheck for converting lookup VP to MLE
-
+        // f_lk (q,w) - f_lk_mle
+        let lookup_zc_aux_info = VPAuxInfo {
+            max_degree: vk.params.lk_gate_func.degree(),
+            num_variables: num_vars,
+            phantom: PhantomData::default(),
+        };
+        let lookup_zc_subclaim = <Self as ZeroCheck<E::ScalarField>>::verify(
+            &proof.lookup_zc_proof,
+            &lookup_zc_aux_info,
+            &mut transcript,
+        )?;
         {
-            // f_lk (q,w) - f_lk_mle
-            let lookup_zc_aux_info = VPAuxInfo {
-                max_degree: vk.params.lk_gate_func.degree(),
-                num_variables: num_vars,
-                phantom: PhantomData::default(),
-            };
-            let lookup_zc_subclaim = <Self as ZeroCheck<E::ScalarField>>::verify(
-                &proof.lookup_zc_proof,
-                &lookup_zc_aux_info,
-                &mut transcript,
-            )?;
             let f_lk_eval = eval_f(&vk.params.lk_gate_func, lk_selector_evals, lk_witness_evals)?;
             if f_lk_eval - lk_mle_eval != lookup_zc_subclaim.expected_evaluation {
                 return Err(HyperPlonkErrors::InvalidProof(
@@ -726,7 +729,7 @@ where
         }
 
         // =======================================================================
-        // 3. Verify the opening against the commitment
+        // 4. Verify the opening against the commitment
         // =======================================================================
         let step = start_timer!(|| "assemble commitments");
 
@@ -805,6 +808,38 @@ where
 
         comms.push(proof.witness_commits[0]);
         points.push(r_pi_padded);
+
+        // 5. Openings for lookup check + lookup ZC check
+
+        //-- a, b for sum check
+        let lookup_check_sc_point = lookup_check_subclaim.sum_check_subclaim.point;
+        comms.push(proof.lookup_check_proof.a_comm);
+        comms.push(proof.lookup_check_proof.b_comm);
+        points.append(&mut vec![lookup_check_sc_point.clone(); 2]);
+
+        //-- p(A,t,m) + alpha * q(B,f) for zero check
+        let lookup_check_zc_point = lookup_check_subclaim.zero_check_subclaim.point;
+        comms.push(proof.lookup_check_proof.a_comm); // for a
+        comms.push(proof.lookup_check_proof.m_comm); // for m
+        comms.push(vk.table_commitment); // for t
+        comms.push(proof.lookup_check_proof.b_comm); // for b
+        comms.push(proof.lookup_check_proof.f_comm); // for f
+        points.append(&mut vec![lookup_check_zc_point.clone(); 5]);
+
+        //-- f_lk_mle, q_lk, w for lookup ZC check
+        let lk_zc_point = lookup_zc_subclaim.point;
+        comms.push(proof.lookup_check_proof.f_comm);
+        for &lk_selector_comm in vk.lk_selector_commitments.iter() {
+            comms.push(lk_selector_comm);
+        }
+        for &wcomm in proof.witness_commits.iter() {
+            comms.push(wcomm);
+        }
+        points.append(&mut vec![
+            lk_zc_point.clone();
+            1 + num_lk_selectors + num_witnesses
+        ]);
+
         assert_eq!(comms.len(), proof.batch_openings.f_i_eval_at_point_i.len());
         end_timer!(pi_step);
 
@@ -846,20 +881,26 @@ mod tests {
         //     ( 1,    Some(id_qL),    vec![id_W1, id_W1, id_W1, id_W1, id_W1]),
         //     (-1,    None,           vec![id_W2])
         // ]
-        //
+        //   Lk gate:
+        //     q_LK0(X) * W_1(X) + q_LK1(X) * W_2(X) in table
         // 4 public input
         // 1 selector,
+        // 2 lk selectors,
         // 2 witnesses,
         // 2 variables for MLE,
         // 4 wires,
         let gates = CustomizedGates {
             gates: vec![(1, Some(0), vec![0, 0, 0, 0, 0]), (-1, None, vec![1])],
         };
-        test_hyperplonk_helper::<Bls12_381>(gates)
+        let lk_gates = CustomizedGates {
+            gates: vec![(1, Some(0), vec![0]), (1, Some(1), vec![1])],
+        };
+        test_hyperplonk_helper::<Bls12_381>(gates, lk_gates)
     }
 
     fn test_hyperplonk_helper<E: Pairing>(
         gate_func: CustomizedGates,
+        lk_gate_func: CustomizedGates,
     ) -> Result<(), HyperPlonkErrors> {
         let mut rng = test_rng();
         let pcs_srs = MultilinearKzgPCS::<E>::gen_srs_for_testing(&mut rng, 16)?;
@@ -874,6 +915,7 @@ mod tests {
             num_constraints,
             num_pub_input,
             gate_func,
+            lk_gate_func,
         };
         let permutation = identity_permutation(nv, num_witnesses);
         let q1 = SelectorColumn(vec![
@@ -882,10 +924,13 @@ mod tests {
             E::ScalarField::one(),
             E::ScalarField::one(),
         ]);
+
         let index = HyperPlonkIndex {
             params,
             permutation,
-            selectors: vec![q1],
+            selectors: vec![q1.clone()],
+            lk_selectors: vec![q1.clone(), q1.clone()],
+            table: (0..256).map(|i| E::ScalarField::from(i as u128)).collect(),
         };
 
         // generate pk and vks

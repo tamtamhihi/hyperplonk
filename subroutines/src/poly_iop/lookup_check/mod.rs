@@ -48,12 +48,12 @@ where
 /// - A zero check subclaim
 /// - A value beta
 pub struct LookupCheckSubClaim<F: PrimeField, ZC: ZeroCheck<F>> {
-    pub zero_check_sub_claim: ZC::ZeroCheckSubClaim,
+    pub zero_check_subclaim: ZC::ZeroCheckSubClaim,
 
-    pub sum_check_sub_claim: <ZC as SumCheck<F>>::SumCheckSubClaim,
+    pub sum_check_subclaim: <ZC as SumCheck<F>>::SumCheckSubClaim,
 
     /// Challenges beta and alpha
-    pub challenges: (F, F),
+    pub challenges: (F, F)
 }
 
 pub struct LookupCheckProof<E, PCS, ZC>
@@ -182,8 +182,8 @@ where
         )?;
 
         Ok(LookupCheckSubClaim {
-            zero_check_sub_claim: zc_sub_claim,
-            sum_check_sub_claim: sc_sub_claim,
+            zero_check_subclaim: zc_sub_claim,
+            sum_check_subclaim: sc_sub_claim,
             challenges: (beta, alpha),
         })
     }
@@ -321,8 +321,8 @@ mod test {
         };
 
         let LookupCheckSubClaim {
-            zero_check_sub_claim, // p + alpha*q = 0
-            sum_check_sub_claim,
+            zero_check_subclaim: zero_check_sub_claim, // p + alpha*q = 0
+            sum_check_subclaim: sum_check_sub_claim,
             challenges,
         } = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::verify(
             &proof,

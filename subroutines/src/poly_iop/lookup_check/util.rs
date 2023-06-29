@@ -161,3 +161,132 @@ pub fn build_l_virtual<F: PrimeField>(
 
     Ok(vp)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use ark_bls12_381::Fr;
+    use ark_ff::PrimeField;
+    use ark_std::{test_rng, UniformRand};
+    use std::convert::From;
+
+    #[test]
+    fn test_compute_multiplicity_poly() -> Result<(), PolyIOPErrors> {
+        let nv = 3;
+        let f = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_vec(
+            nv,
+            convert_usize_to_field(&[1, 1, 1, 2, 2, 3, 3, 4]),
+        ));
+        let t = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_vec(
+            nv,
+            convert_usize_to_field(&[1, 2, 3, 4, 4, 4, 4, 4]),
+        ));
+
+        let m = compute_multiplicity_poly(&f, &t)?;
+        let mut expected_m = vec![Fr::from(3), Fr::from(2), Fr::from(2)];
+        expected_m.append(&mut vec![Fr::from(1) / Fr::from(5); 5]);
+        assert_eq!(
+            m.to_evaluations(),
+            expected_m,
+            "multiplicity poly is incorrect, expected {:?}, found {expected_m:?}",
+            m.to_evaluations(),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_a_poly() -> Result<(), PolyIOPErrors> {
+        let nv = 3;
+        let mut rng = test_rng();
+
+        let t = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+        let m = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+        let beta = Fr::rand(&mut rng);
+
+        let a = compute_a(&m, &t, &beta)?;
+
+        for i in 0..1 << nv {
+            assert_eq!(
+                a.evaluations[i],
+                m.evaluations[i] / (beta + t.evaluations[i]),
+                "a poly is not correct at position {i}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_b_poly() -> Result<(), PolyIOPErrors> {
+        let nv = 3;
+        let mut rng = test_rng();
+
+        let f = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+        let beta = Fr::rand(&mut rng);
+
+        let b = compute_b(&f, &beta)?;
+
+        for i in 0..1 << nv {
+            assert_eq!(
+                b.evaluations[i],
+                Fr::from(1) / (beta + f.evaluations[i]),
+                "b poly is not correct at position {i}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_p_vp() -> Result<(), PolyIOPErrors> {
+        let nv = 3;
+        let mut rng = test_rng();
+
+        let a = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+        let m = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+        let t = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+
+        let beta = Fr::rand(&mut rng);
+
+        let p = build_p_virtual(&a, &t, &m, &beta)?.to_mle()?;
+
+        for i in 0..1 << nv {
+            assert_eq!(
+                p.evaluations[i],
+                a.evaluations[i] * (beta + t.evaluations[i]) - m.evaluations[i],
+                "p virtual poly is not correct at position {i}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_q_vp() -> Result<(), PolyIOPErrors> {
+        let nv = 3;
+        let mut rng = test_rng();
+
+        let b = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+        let f = Arc::new(DenseMultilinearExtension::<Fr>::rand(nv, &mut rng));
+
+        let beta = Fr::rand(&mut rng);
+
+        let q = build_q_virtual(&b, &f, &beta)?.to_mle()?;
+
+        for i in 0..1 << nv {
+            assert_eq!(
+                q.evaluations[i],
+                b.evaluations[i] * (beta + f.evaluations[i]) - Fr::from(1),
+                "q virtual poly is not correct at position {i}"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn convert_usize_to_field<F: PrimeField>(v: &[usize]) -> Vec<F> {
+        v.iter()
+            .map(|value| F::from(*value as u128))
+            .collect::<Vec<_>>()
+    }
+}

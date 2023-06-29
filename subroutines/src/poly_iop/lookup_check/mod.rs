@@ -379,7 +379,7 @@ mod test {
 
         // 3) Generate srs
         let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, num_vars)?;
-        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(&srs, None, Some(num_vars))?;
+        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(num_vars))?;
 
         // 4) Generate proof & verify proof
         test_lookup_check_helper::<Bls12_381, MultilinearKzgPCS<Bls12_381>>(&f, &t, &pcs_param)?;

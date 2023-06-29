@@ -304,6 +304,37 @@ mod test {
     use ark_bls12_381::Fr;
     use ark_ff::PrimeField;
     use ark_poly::MultilinearExtension;
+
+    #[test]
+    fn test_take_next_n() {
+        let v = &(0..20).collect::<Vec<_>>();
+        let mut pointer = 0;
+
+        let v0_4 = take_next_n(5, v, &mut pointer);
+        assert_eq!(
+            pointer, 5,
+            "pointer is not updated, expected 5, found {pointer}"
+        );
+        assert_eq!(
+            v0_4,
+            &(0..5).collect::<Vec<_>>(),
+            "returned array is not correct, expected {:?}, found {v0_4:?}",
+            (0..5)
+        );
+
+        let v5_14 = take_next_n(10, v, &mut pointer);
+        assert_eq!(
+            pointer, 15,
+            "pointer is not updated, expected 15, found {pointer}"
+        );
+        assert_eq!(
+            v5_14,
+            &(5..15).collect::<Vec<_>>(),
+            "returned array is not correct, expected {:?}, found {v5_14:?}",
+            (5..15)
+        );
+    }
+
     #[test]
     fn test_build_gate() -> Result<(), HyperPlonkErrors> {
         test_build_gate_helper::<Fr>()

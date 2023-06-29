@@ -568,4 +568,26 @@ mod test {
 
         Arc::new(mle)
     }
+
+    #[test]
+    fn test_virtual_polynomial_to_mle() -> Result<(), ArithErrors> {
+        let mut rng = test_rng();
+
+        for nv in 1..10 {
+            for num_products in 2..10 {
+                let (vp, vp_sum) =
+                    VirtualPolynomial::<Fr>::rand(nv, (3, 7), num_products, &mut rng)?;
+
+                let mle = VirtualPolynomial::to_mle(&vp)?;
+
+                assert_eq!(
+                    mle.to_evaluations().iter().sum::<Fr>(),
+                    vp_sum,
+                    "incorrect encoding of vp to mle",
+                );
+            }
+        }
+
+        Ok(())
+    }
 }

@@ -23,7 +23,7 @@ pub(super) fn compute_multiplicity_poly<F: PrimeField>(
 
     // Count number of occurences of each elements
     for num in t.iter() {
-        *h_t.entry(*num).or_insert(F::zero()) += F::one();
+        *h_t.entry(*num).or_insert_with(F::zero) += F::one();
     }
     for num in f.iter() {
         if h_t.get(num).is_none() {
@@ -31,7 +31,7 @@ pub(super) fn compute_multiplicity_poly<F: PrimeField>(
                 "Lookup value {num} is not in table"
             )));
         }
-        *h_f.entry(*num).or_insert(F::zero()) += F::one();
+        *h_f.entry(*num).or_insert_with(F::zero) += F::one();
     }
 
     let m_evals = t

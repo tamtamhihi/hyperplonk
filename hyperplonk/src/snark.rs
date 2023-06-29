@@ -157,25 +157,51 @@ where
     /// 3. Run permutation check on `\{w_i(x)\}` and `permutation_oracle`, and
     /// obtain a PermCheckSubClaim.
     ///
-    /// 4. Generate evaluations and corresponding proofs
-    /// - 4.1. (deferred) batch opening prod(x) at
+    /// 4. Run lookup check on `f_lk_mle`
+    /// - the MLE of evaluations from
+    ///
+    ///     `f_lk(qlk_0(x),...,qlk_lk(x), w_0(x),...,w_d(x))`
+    ///
+    /// where `f_lk` is the lookup constraint polynomial
+    /// to obtain the LookupCheck Subclaim.
+    ///
+    /// We then need to run a ZeroCheck on `f_lk - f_lk_mle`
+    /// to ensure the MLE is evaluated correctly.
+    ///
+    /// 5. Generate evaluations and corresponding proofs
+    ///
+    /// - 5.1) zero check evaluations and proofs
+    ///   - (deferred) wi_poly(zero_check_point)
+    ///   - (deferred) selector_poly(zero_check_point)
+    ///
+    /// - 5.2) permcheck
+    ///   1. (deferred) batch opening prod(x) at
     ///   - [0, perm_check_point]
     ///   - [1, perm_check_point]
     ///   - [perm_check_point, 0]
     ///   - [perm_check_point, 1]
     ///   - [1,...1, 0]
+    ///   2. (deferred) batch opening frac(x) at
+    ///   - [perm_check_point]
+    ///   - [perm_check_point[2..n], 0]
+    ///   - [perm_check_point[2..n], 1]
+    ///   3. (deferred) batch opening s_id(x) at
+    ///   - [perm_check_point]
+    ///   4. (deferred) batch opening perms(x) at
+    ///   - [perm_check_point]
+    ///   5. (deferred) batch opening witness_i(x) at
+    ///   - [perm_check_point]
+    ///   
+    /// - 5.3) lookup check + lookup zerocheck
+    ///   1. a(x), b(x) at lookup's sumcheck_point
+    ///   2. a(x), b(x), f(x), m(x), t(x) at lookup's zerocheck_point
+    ///   3. lk_selector_poly(x) and witness(x) at lookup_zc_point
     ///
-    /// - 4.2. permutation check evaluations and proofs
-    ///   - 4.2.1. (deferred) wi_poly(perm_check_point)
-    ///
-    /// - 4.3. zero check evaluations and proofs
-    ///   - 4.3.1. (deferred) wi_poly(zero_check_point)
-    ///   - 4.3.2. (deferred) selector_poly(zero_check_point)
-    ///
-    /// - 4.4. public input consistency checks
+    /// - 5.4) public input consistency checks
     ///   - pi_poly(r_pi) where r_pi is sampled from transcript
     ///
-    /// - 5. deferred batch opening
+    ///
+    /// 6. deferred batch opening
     fn prove(
         pk: &Self::ProvingKey,
         pub_input: &[E::ScalarField],
@@ -236,8 +262,8 @@ where
             &pk.selector_oracles,
             &witness_polys,
         )?;
-
         let zero_check_proof = <Self as ZeroCheck<E::ScalarField>>::prove(&fx, &mut transcript)?;
+
         end_timer!(step);
         // =======================================================================
         // 3. Run permutation check on `\{w_i(x)\}` and `permutation_oracle`, and
@@ -256,116 +282,14 @@ where
 
         end_timer!(step);
         // =======================================================================
-        // 4. Generate evaluations and corresponding proofs
-        // - permcheck
-        //  1. (deferred) batch opening prod(x) at
-        //   - [perm_check_point]
-        //   - [perm_check_point[2..n], 0]
-        //   - [perm_check_point[2..n], 1]
-        //   - [1,...1, 0]
-        //  2. (deferred) batch opening frac(x) at
-        //   - [perm_check_point]
-        //   - [perm_check_point[2..n], 0]
-        //   - [perm_check_point[2..n], 1]
-        //  3. (deferred) batch opening s_id(x) at
-        //   - [perm_check_point]
-        //  4. (deferred) batch opening perms(x) at
-        //   - [perm_check_point]
-        //  5. (deferred) batch opening witness_i(x) at
-        //   - [perm_check_point]
-        //
-        // - zero check evaluations and proofs
-        //   - 4.3.1. (deferred) wi_poly(zero_check_point)
-        //   - 4.3.2. (deferred) selector_poly(zero_check_point)
-        //
-        // - 4.4. (deferred) public input consistency checks
-        //   - pi_poly(r_pi) where r_pi is sampled from transcript
-        // =======================================================================
-        let step = start_timer!(|| "opening and evaluations");
-
-        // (perm_check_point[2..n], 0)
-        let perm_check_point_0 = [
-            &[E::ScalarField::zero()],
-            &perm_check_point[0..num_vars - 1],
-        ]
-        .concat();
-        // (perm_check_point[2..n], 1)
-        let perm_check_point_1 =
-            [&[E::ScalarField::one()], &perm_check_point[0..num_vars - 1]].concat();
-        // (1, ..., 1, 0)
-        let prod_final_query_point = [
-            vec![E::ScalarField::zero()],
-            vec![E::ScalarField::one(); num_vars - 1],
-        ]
-        .concat();
-
-        // prod(x)'s points
-        pcs_acc.insert_poly_and_points(&prod_x, &perm_check_proof.prod_x_comm, perm_check_point);
-        pcs_acc.insert_poly_and_points(&prod_x, &perm_check_proof.prod_x_comm, &perm_check_point_0);
-        pcs_acc.insert_poly_and_points(&prod_x, &perm_check_proof.prod_x_comm, &perm_check_point_1);
-        pcs_acc.insert_poly_and_points(
-            &prod_x,
-            &perm_check_proof.prod_x_comm,
-            &prod_final_query_point,
-        );
-
-        // frac(x)'s points
-        pcs_acc.insert_poly_and_points(&frac_poly, &perm_check_proof.frac_comm, perm_check_point);
-        pcs_acc.insert_poly_and_points(
-            &frac_poly,
-            &perm_check_proof.frac_comm,
-            &perm_check_point_0,
-        );
-        pcs_acc.insert_poly_and_points(
-            &frac_poly,
-            &perm_check_proof.frac_comm,
-            &perm_check_point_1,
-        );
-
-        // perms(x)'s points
-        for (perm, pcom) in pk
-            .permutation_oracles
-            .iter()
-            .zip(pk.permutation_commitments.iter())
-        {
-            pcs_acc.insert_poly_and_points(perm, pcom, perm_check_point);
-        }
-
-        // witnesses' points
-        // TODO: refactor so it remains correct even if the order changed
-        for (wpoly, wcom) in witness_polys.iter().zip(witness_commits.iter()) {
-            pcs_acc.insert_poly_and_points(wpoly, wcom, perm_check_point);
-        }
-        for (wpoly, wcom) in witness_polys.iter().zip(witness_commits.iter()) {
-            pcs_acc.insert_poly_and_points(wpoly, wcom, &zero_check_proof.point);
-        }
-
-        //   - 4.3.2. (deferred) selector_poly(zero_check_point)
-        pk.selector_oracles
-            .iter()
-            .zip(pk.selector_commitments.iter())
-            .for_each(|(poly, com)| {
-                pcs_acc.insert_poly_and_points(poly, com, &zero_check_proof.point)
-            });
-
-        // - 4.4. public input consistency checks
-        //   - pi_poly(r_pi) where r_pi is sampled from transcript
-        let r_pi = transcript.get_and_append_challenge_vectors(b"r_pi", ell)?;
-        // padded with zeros
-        let r_pi_padded = [r_pi, vec![E::ScalarField::zero(); num_vars - ell]].concat();
-        // Evaluate witness_poly[0] at r_pi||0s which is equal to public_input evaluated
-        // at r_pi. Assumes that public_input is a power of 2
-        pcs_acc.insert_poly_and_points(&witness_polys[0], &witness_commits[0], &r_pi_padded);
-        end_timer!(step);
-
-        // =======================================================================
-        // 5. Lookup Check for:
+        // 4. Lookup Check for:
         //       f_lk(q_lk_0(x), ..., q_lk_(x), w_0(x),...) in t
         // We evaluate a virtual polynomial <f_lk> into a MLE <f> to run LookupCheck.
         //
         // We then need to run a ZeroCheck on <f_lk(q_lks, ws) - f> to make sure
-        //
+        // the virtual polynomial is encoded correctly as MLE.
         // =======================================================================
+        let step = start_timer!(|| "Lookup check on f_lk");
 
         let mut f_lk = build_f(
             &pk.params.lk_gate_func,
@@ -385,7 +309,113 @@ where
         f_lk.add_mle_list(vec![Arc::clone(&f_lk_mle)], -E::ScalarField::one())?;
         let lookup_zc_proof = <Self as ZeroCheck<E::ScalarField>>::prove(&f_lk, &mut transcript)?;
 
-        //--  5.1 Openings of a,b for sumcheck inside lookup check
+        end_timer!(step);
+        // =======================================================================
+        // 5. Generate evaluations and corresponding proofs
+        //
+        //  5.1) zero check evaluations and proofs
+        //   - (deferred) wi_poly(zero_check_point)
+        //   - (deferred) selector_poly(zero_check_point)
+        //
+        //  5.2) permcheck
+        //  1. (deferred) batch opening prod(x) at
+        //   - [perm_check_point]
+        //   - [perm_check_point[2..n], 0]
+        //   - [perm_check_point[2..n], 1]
+        //   - [1,...1, 0]
+        //  2. (deferred) batch opening frac(x) at
+        //   - [perm_check_point]
+        //   - [perm_check_point[2..n], 0]
+        //   - [perm_check_point[2..n], 1]
+        //  3. (deferred) batch opening s_id(x) at
+        //   - [perm_check_point]
+        //  4. (deferred) batch opening perms(x) at
+        //   - [perm_check_point]
+        //  5. (deferred) batch opening witness_i(x) at
+        //   - [perm_check_point]
+        //
+        //  5.3) lookup check & lookup zero check
+        //  1. a(x), b(x) at lookup's sumcheck_point
+        //  2. a(x), b(x), f(x), m(x), t(x) at lookup's zerocheck_point
+        //  3. lk_selector_poly(x) and witness(x) at lookup_zc_point
+        //
+        //  5.4) public input consistency checks
+        //   - pi_poly(r_pi) where r_pi is sampled from transcript
+        // =======================================================================
+        let step = start_timer!(|| "opening and evaluations");
+
+        //// 1. ZeroCheck on witness & selector polynomials
+        for (wpoly, wcom) in witness_polys.iter().zip(witness_commits.iter()) {
+            pcs_acc.insert_poly_and_points(wpoly, wcom, &zero_check_proof.point);
+        }
+        pk.selector_oracles
+            .iter()
+            .zip(pk.selector_commitments.iter())
+            .for_each(|(poly, com)| {
+                pcs_acc.insert_poly_and_points(poly, com, &zero_check_proof.point)
+            });
+
+        //// 2. PermCheck
+
+        //---- (perm_check_point[2..n], 0)
+        let perm_check_point_0 = [
+            &[E::ScalarField::zero()],
+            &perm_check_point[0..num_vars - 1],
+        ]
+        .concat();
+
+        //---- (perm_check_point[2..n], 1)
+        let perm_check_point_1 =
+            [&[E::ScalarField::one()], &perm_check_point[0..num_vars - 1]].concat();
+
+        //---- (1, ..., 1, 0)
+        let prod_final_query_point = [
+            vec![E::ScalarField::zero()],
+            vec![E::ScalarField::one(); num_vars - 1],
+        ]
+        .concat();
+
+        //---- prod(x)'s points
+        pcs_acc.insert_poly_and_points(&prod_x, &perm_check_proof.prod_x_comm, perm_check_point);
+        pcs_acc.insert_poly_and_points(&prod_x, &perm_check_proof.prod_x_comm, &perm_check_point_0);
+        pcs_acc.insert_poly_and_points(&prod_x, &perm_check_proof.prod_x_comm, &perm_check_point_1);
+        pcs_acc.insert_poly_and_points(
+            &prod_x,
+            &perm_check_proof.prod_x_comm,
+            &prod_final_query_point,
+        );
+
+        //---- frac(x)'s points
+        pcs_acc.insert_poly_and_points(&frac_poly, &perm_check_proof.frac_comm, perm_check_point);
+        pcs_acc.insert_poly_and_points(
+            &frac_poly,
+            &perm_check_proof.frac_comm,
+            &perm_check_point_0,
+        );
+        pcs_acc.insert_poly_and_points(
+            &frac_poly,
+            &perm_check_proof.frac_comm,
+            &perm_check_point_1,
+        );
+
+        //---- perms(x)'s points
+        for (perm, pcom) in pk
+            .permutation_oracles
+            .iter()
+            .zip(pk.permutation_commitments.iter())
+        {
+            pcs_acc.insert_poly_and_points(perm, pcom, perm_check_point);
+        }
+
+        //---- witnesses' points
+        // TODO: refactor so it remains correct even if the order changed
+        for (wpoly, wcom) in witness_polys.iter().zip(witness_commits.iter()) {
+            pcs_acc.insert_poly_and_points(wpoly, wcom, perm_check_point);
+        }
+
+        //// 3. LookupCheck & LookupZC Check
+
+        //---- Openings of a,b for sumcheck inside lookup check
         pcs_acc.insert_poly_and_points(
             &a_poly,
             &lookup_check_proof.a_comm,
@@ -397,7 +427,7 @@ where
             &lookup_check_proof.sc_proof.point,
         );
 
-        //-- 5.2 Openings of f_lk_mle, m, t for zerocheck inside lookup check
+        //---- Openings of f_lk_mle, m, t for zerocheck inside lookup check
         pcs_acc.insert_poly_and_points(
             &a_poly,
             &lookup_check_proof.a_comm,
@@ -424,7 +454,7 @@ where
             &lookup_check_proof.zc_proof.point,
         );
 
-        //-- 5.3 Openings of f_lk_mle, q_lk_0..., w_0... for zero check of (f_lk - f_lk_mle)
+        //---- Openings of f_lk_mle, q_lk_0..., w_0... for zero check of (f_lk - f_lk_mle)
         let lk_zc_point = &lookup_zc_proof.point;
 
         pcs_acc.insert_poly_and_points(&f_lk_mle, &lookup_check_proof.f_comm, lk_zc_point);
@@ -437,6 +467,16 @@ where
             .zip(witness_commits.iter())
             .for_each(|(oracle, comm)| pcs_acc.insert_poly_and_points(oracle, comm, lk_zc_point));
 
+        //// 4. public input consistency checks
+        //   - pi_poly(r_pi) where r_pi is sampled from transcript
+        let r_pi = transcript.get_and_append_challenge_vectors(b"r_pi", ell)?;
+        // padded with zeros
+        let r_pi_padded = [r_pi, vec![E::ScalarField::zero(); num_vars - ell]].concat();
+        // Evaluate witness_poly[0] at r_pi||0s which is equal to public_input evaluated
+        // at r_pi. Assumes that public_input is a power of 2
+        pcs_acc.insert_poly_and_points(&witness_polys[0], &witness_commits[0], &r_pi_padded);
+
+        end_timer!(step);
         // =======================================================================
         // 6. deferred batch opening
         // =======================================================================
@@ -474,7 +514,23 @@ where
     /// Outputs:
     /// - Return a boolean on whether the verification is successful
     ///
-    /// 1. Verify zero_check_proof on
+    /// 0. sanity check
+    ///
+    /// 0'. Extract all evaluations from batch openings
+    ///     - sumcheck
+    ///     - permcheck
+    ///     - lookupcheck + lookup zerocheck
+    ///     - public input check
+    ///
+    /// 1. Append witness commits to transcript.
+    ///
+    ///
+    /// In each of the following step (2-5), we will:
+    ///     - call verify() on the corresponding IOP
+    ///     - obtain subclaim
+    ///     - use batch opening evaluations to verify subclaim
+    ///
+    /// 2. Verify zero_check_proof on
     ///
     ///     `f(q_0(x),...q_l(x), w_0(x),...w_d(x))`
     ///
@@ -485,13 +541,16 @@ where
     /// ```
     /// in vanilla plonk, and obtain a ZeroCheckSubClaim
     ///
-    /// 2. Verify perm_check_proof on `\{w_i(x)\}` and `permutation_oracles`
+    /// 3. Verify perm_check_proof on `\{w_i(x)\}` and `permutation_oracles`
     ///
-    /// 3. check subclaim validity
+    /// 4. Verify lookup_check_proof + lookup_zc_proof
     ///
-    /// 4. Verify the opening against the commitment:
-    /// - check permutation check evaluations
+    /// 5. Verify public input check
+    ///
+    /// 6. Verify the opening against the commitment:
     /// - check zero check evaluations
+    /// - check permutation check evaluations
+    /// - check lookupcheck + lookup zerocheck evaluations
     /// - public input consistency checks
     fn verify(
         vk: &Self::VerifyingKey,
@@ -505,7 +564,6 @@ where
         let num_selectors = vk.params.num_selector_columns();
         let num_witnesses = vk.params.num_witness_columns();
         let num_vars = vk.params.num_variables();
-
         let num_lk_selectors = vk.params.num_lk_selector_columns();
 
         //  online public input of length 2^\ell
@@ -522,26 +580,42 @@ where
                 1 << ell
             )));
         }
+        // =======================================================================
+        // 0'. Extract evaluations from openings
+        // =======================================================================
 
-        // Extract evaluations from openings
         let batch_evals = &proof.batch_openings.f_i_eval_at_point_i;
         let mut pointer = 0;
+
+        //// 1. ZeroCheck
+        let witness_gate_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
+        let selector_evals = take_next_n(num_selectors, batch_evals, &mut pointer);
+
+        //// 2. PermCheck
         let prod_evals = take_next_n(4, batch_evals, &mut pointer);
         let frac_evals = take_next_n(3, batch_evals, &mut pointer);
         let perm_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
         let witness_perm_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
-        let witness_gate_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
-        let selector_evals = take_next_n(num_selectors, batch_evals, &mut pointer);
-        let pi_eval = take_next_n(1, batch_evals, &mut pointer)[0];
 
+        //// 3. Lookup Check
         let lk_ab_evals = take_next_n(2, batch_evals, &mut pointer);
         let lk_zc_evals = take_next_n(5, batch_evals, &mut pointer);
         let lk_mle_eval = take_next_n(1, batch_evals, &mut pointer)[0];
         let lk_selector_evals = take_next_n(num_lk_selectors, batch_evals, &mut pointer);
         let lk_witness_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
 
+        //// 4. Public input
+        let pi_eval = take_next_n(1, batch_evals, &mut pointer)[0];
+
         // =======================================================================
-        // 1. Verify zero_check_proof on
+        // 1. Append witness commitment to transcript
+        // =======================================================================
+        for w_com in proof.witness_commits.iter() {
+            transcript.append_serializable_element(b"w", w_com)?;
+        }
+
+        // =======================================================================
+        // 2. Verify zero_check_proof on
         //     `f(q_0(x),...q_l(x), w_0(x),...w_d(x))`
         //
         // where `f` is the constraint polynomial i.e.,
@@ -551,25 +625,19 @@ where
         //
         // =======================================================================
         let step = start_timer!(|| "verify zero check");
+
         // Zero check and perm check have different AuxInfo
         let zero_check_aux_info = VPAuxInfo::<E::ScalarField> {
             max_degree: vk.params.gate_func.degree(),
             num_variables: num_vars,
             phantom: PhantomData::default(),
         };
-        // push witness to transcript
-        for w_com in proof.witness_commits.iter() {
-            transcript.append_serializable_element(b"w", w_com)?;
-        }
-
         let zero_check_sub_claim = <Self as ZeroCheck<E::ScalarField>>::verify(
             &proof.zero_check_proof,
             &zero_check_aux_info,
             &mut transcript,
         )?;
-
         let zero_check_point = zero_check_sub_claim.point.clone();
-
         // check zero check subclaim
         let f_eval = eval_f(&vk.params.gate_func, selector_evals, witness_gate_evals)?;
         if f_eval != zero_check_sub_claim.expected_evaluation {
@@ -580,7 +648,7 @@ where
 
         end_timer!(step);
         // =======================================================================
-        // 2. Verify perm_check_proof on `\{w_i(x)\}` and `permutation_oracle`
+        // 3. Verify perm_check_proof on `\{w_i(x)\}` and `permutation_oracle`
         // =======================================================================
         let step = start_timer!(|| "verify permutation check");
 
@@ -637,25 +705,10 @@ where
 
         end_timer!(step);
 
-        // Public input consistency checks
-        //   - pi_poly(r_pi) where r_pi is sampled from transcript
-        let r_pi = transcript.get_and_append_challenge_vectors(b"r_pi", ell)?;
-
-        // check public evaluation
-        let pi_step = start_timer!(|| "check public evaluation");
-        let pi_poly = DenseMultilinearExtension::from_evaluations_slice(ell, pub_input);
-        let expect_pi_eval = evaluate_opt(&pi_poly, &r_pi[..]);
-        if expect_pi_eval != pi_eval {
-            return Err(HyperPlonkErrors::InvalidProver(format!(
-                "Public input eval mismatch: got {}, expect {}",
-                pi_eval, expect_pi_eval,
-            )));
-        }
-        end_timer!(pi_step);
-
         // =======================================================================
-        // 3. Verify lookup_check_proof
+        // 4. Verify lookup_check_proof + lookup_zc_proof
         // =======================================================================
+        let step = start_timer!(|| "verify permutation check");
 
         let sc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
             max_degree: 1,
@@ -667,7 +720,6 @@ where
             num_variables: num_vars,
             phantom: PhantomData::default(),
         };
-
         let lookup_check_subclaim = <Self as LookupCheck<E, PCS>>::verify(
             &proof.lookup_check_proof,
             &zc_aux_info,
@@ -729,9 +781,27 @@ where
                 ));
             }
         }
+        end_timer!(step);
+        // =======================================================================
+        // 5. Public input consistency checks
+        //   - pi_poly(r_pi) where r_pi is sampled from transcript
+        // =======================================================================
+        let r_pi = transcript.get_and_append_challenge_vectors(b"r_pi", ell)?;
+
+        // check public evaluation
+        let pi_step = start_timer!(|| "check public evaluation");
+        let pi_poly = DenseMultilinearExtension::from_evaluations_slice(ell, pub_input);
+        let expect_pi_eval = evaluate_opt(&pi_poly, &r_pi[..]);
+        if expect_pi_eval != pi_eval {
+            return Err(HyperPlonkErrors::InvalidProver(format!(
+                "Public input eval mismatch: got {}, expect {}",
+                pi_eval, expect_pi_eval,
+            )));
+        }
+        end_timer!(pi_step);
 
         // =======================================================================
-        // 4. Verify the opening against the commitment
+        // 6. Verify the opening against the commitment
         // =======================================================================
         let step = start_timer!(|| "assemble commitments");
 
@@ -739,6 +809,18 @@ where
         let mut comms = vec![];
         let mut points = vec![];
 
+        //// 6.1. ZeroCheck
+        for &wcom in proof.witness_commits.iter() {
+            comms.push(wcom);
+            points.push(zero_check_point.clone());
+        }
+        // selector_poly(zero_check_point)
+        for &com in vk.selector_commitments.iter() {
+            comms.push(com);
+            points.push(zero_check_point.clone());
+        }
+
+        //// 6.2. PermCheck
         let perm_check_point_0 = [
             &[E::ScalarField::zero()],
             &perm_check_point[0..num_vars - 1],
@@ -781,26 +863,8 @@ where
             comms.push(wcom);
             points.push(perm_check_point.clone());
         }
-        for &wcom in proof.witness_commits.iter() {
-            comms.push(wcom);
-            points.push(zero_check_point.clone());
-        }
 
-        // selector_poly(zero_check_point)
-        for &com in vk.selector_commitments.iter() {
-            comms.push(com);
-            points.push(zero_check_point.clone());
-        }
-
-        // - 4.4. public input consistency checks
-        //   - pi_poly(r_pi) where r_pi is sampled from transcript
-
-        let r_pi_padded = [r_pi, vec![E::ScalarField::zero(); num_vars - ell]].concat();
-
-        comms.push(proof.witness_commits[0]);
-        points.push(r_pi_padded);
-
-        // 5. Openings for lookup check + lookup ZC check
+        //// 6.3. Openings for lookup check + lookup ZC check
 
         //-- A, B for sum check
         let lookup_check_sc_point = lookup_check_subclaim.sum_check_subclaim.point;
@@ -827,6 +891,14 @@ where
             comms.push(wcomm);
         }
         points.append(&mut vec![lk_zc_point; 1 + num_lk_selectors + num_witnesses]);
+
+        //// 6.4. public input consistency checks
+        //   - pi_poly(r_pi) where r_pi is sampled from transcript
+
+        let r_pi_padded = [r_pi, vec![E::ScalarField::zero(); num_vars - ell]].concat();
+
+        comms.push(proof.witness_commits[0]);
+        points.push(r_pi_padded);
 
         assert_eq!(comms.len(), proof.batch_openings.f_i_eval_at_point_i.len());
 
@@ -912,7 +984,7 @@ mod tests {
             E::ScalarField::one(),
         ]);
 
-        let index = HyperPlonkIndex {
+        let mut index = HyperPlonkIndex {
             params,
             permutation,
             selectors: vec![q1.clone()],
@@ -957,6 +1029,27 @@ mod tests {
             &vk, &pi.0, &proof,
         )?;
         assert!(verify, "Proof failed SNARK verify");
+
+        // bad path 0: lookup not in table
+        let correct_table = index.table;
+        index.table = vec![E::ScalarField::one(); 4];
+
+        let (pk0, _) =
+            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::preprocess(
+                &index, &pcs_srs,
+            )?;
+
+        assert!(
+            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::prove(
+                &pk0,
+                &pi.0,
+                &[w1.clone(), w2.clone()]
+            )
+            .is_err(),
+            "Lookup not in table but still pass snark prove()",
+        );
+
+        index.table = correct_table;
 
         // bad path 1: wrong permutation
         let rand_perm: Vec<E::ScalarField> = random_permutation(nv, num_witnesses, &mut rng);

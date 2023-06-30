@@ -21,9 +21,9 @@ use subroutines::{
     poly_iop::PolyIOP,
 };
 
-const SUPPORTED_SIZE: usize = 20;
-const MIN_NUM_VARS: usize = 8;
-const MAX_NUM_VARS: usize = 20;
+const SUPPORTED_SIZE: usize = 10;
+const MIN_NUM_VARS: usize = 5;
+const MAX_NUM_VARS: usize = 10;
 const MIN_CUSTOM_DEGREE: usize = 1;
 const MAX_CUSTOM_DEGREE: usize = 32;
 const HIGH_DEGREE_TEST_NV: usize = 15;
@@ -123,7 +123,7 @@ fn bench_mock_circuit_zkp_helper(
     };
 
     //==========================================================
-    let circuit = MockCircuit::<Fr>::new(1 << nv, gate);
+    let circuit = MockCircuit::<Fr>::new(1 << nv, gate, gate);
     assert!(circuit.is_satisfied());
     let index = circuit.index;
     //==========================================================

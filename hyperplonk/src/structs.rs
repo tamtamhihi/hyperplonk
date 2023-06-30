@@ -130,6 +130,10 @@ impl<F: PrimeField> HyperPlonkIndex<F> {
         self.params.num_selector_columns()
     }
 
+    pub fn num_lk_selector_columns(&self) -> usize {
+        self.params.num_lk_selector_columns()
+    }
+
     /// number of witness columns
     pub fn num_witness_columns(&self) -> usize {
         self.params.num_witness_columns()

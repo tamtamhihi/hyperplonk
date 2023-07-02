@@ -50,21 +50,27 @@ pub(super) fn compute_h<F: PrimeField> (
 
 
 pub(super) fn get_primitive_polynomial(n: usize) -> Result<Vec<usize>, PolyIOPErrors> {
-    if n < 2 || n > 10 {
+    if n < 2 || n > 16 {
         return Err(PolyIOPErrors::InvalidProof(format!(
-            "Only support primitive polynomial whose degree < 2 and > 10"
+            "Only support primitive polynomial whose degree >= 2 and <= 15"
         )));
     }
     let primitive_polynomial: Vec<Vec<usize>> = vec![
-        vec![1,1,1],
-        vec![1,0,1,1],
-        vec![1,0,0,1,1],
-        vec![1,0,0,1,0,1],
-        vec![1,0,0,0,0,1,1],
-        vec![1,0,0,0,0,0,1,1],
-        vec![1,0,0,0,1,1,1,0,1],
-        vec![1,0,0,0,0,1,0,0,0,1],
-        vec![1,0,0,0,0,0,0,1,0,0,1],
+        vec![1,1,1],                                //2
+        vec![1,0,1,1],                              //3
+        vec![1,0,0,1,1],                            //4
+        vec![1,0,0,1,0,1],                          //5
+        vec![1,0,0,0,0,1,1],                        //6
+        vec![1,0,0,0,0,0,1,1],                      //7
+        vec![1,0,0,0,1,1,1,0,1],                    //8
+        vec![1,0,0,0,0,1,0,0,0,1],                  //9
+        vec![1,0,0,0,0,0,0,1,0,0,1],                //10
+        vec![1,0,0,0,0,0,0,0,0,1,0,1],              //11
+        vec![1,0,0,0,0,0,1,0,1,0,0,1,1],            //12
+        vec![1,0,0,0,0,0,0,0,0,1,1,0,1,1],          //13
+        vec![1,0,0,0,0,0,1,0,1,0,0,0,0,1,1],        //14
+        vec![1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],      //15
+        vec![1,0,0,0,1,0,0,0,0,0,0,0,0,1,0,1,1],    //16
     ];
     Ok(primitive_polynomial[n-2].clone())
 }

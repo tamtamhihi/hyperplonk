@@ -396,4 +396,9 @@ mod test {
     fn test_10() -> Result<(), PolyIOPErrors> {
         test_lookup_check(10)
     }
+
+    #[test]
+    fn test_15() -> Result<(), PolyIOPErrors> {
+        test_lookup_check(15)
+    }
 }

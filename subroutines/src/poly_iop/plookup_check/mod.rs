@@ -319,7 +319,12 @@ mod test {
     }
 
     #[test]
-    fn test_9() -> Result<(), PolyIOPErrors> {
-        test_plookup_check::<Fr>(9)
+    fn test_10() -> Result<(), PolyIOPErrors> {
+        test_plookup_check::<Fr>(10)
+    }
+
+    #[test]
+    fn test_15() -> Result<(), PolyIOPErrors> {
+        test_plookup_check::<Fr>(15)
     }
 }

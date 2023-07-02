@@ -1,13 +1,15 @@
 use crate::{PolyIOP, PolyIOPErrors, PolynomialCommitmentScheme, SumCheck, ZeroCheck};
 use arithmetic::VPAuxInfo;
 use ark_ec::pairing::Pairing;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::{One, PrimeField, Zero};
 use ark_poly::DenseMultilinearExtension;
+use dashmap::DashMap;
 use std::sync::Arc;
 use transcript::IOPTranscript;
 
 mod util;
 use self::util::*;
+use super::structs::PreprocessedTable;
 
 pub trait LookupCheck<E, PCS>: ZeroCheck<E::ScalarField>
 where
@@ -19,11 +21,16 @@ where
 
     fn init_transcript() -> Self::Transcript;
 
+    fn preprocess_table(
+        nv: usize,
+        t: &[E::ScalarField],
+    ) -> Result<PreprocessedTable<E::ScalarField, E::ScalarField>, PolyIOPErrors>;
+
     #[allow(clippy::type_complexity)]
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        t: &Self::MultilinearExtension,
+        preprocessed_table: &PreprocessedTable<E::ScalarField, E::ScalarField>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
@@ -81,10 +88,33 @@ where
         IOPTranscript::<E::ScalarField>::new(b"Initializing LookupCheck transcript")
     }
 
+    fn preprocess_table(
+        nv: usize,
+        table: &[E::ScalarField],
+    ) -> Result<PreprocessedTable<E::ScalarField, E::ScalarField>, PolyIOPErrors> {
+        if table.len() != 1 << nv {
+            return Err(PolyIOPErrors::InvalidParameters(
+                "table does not have sufficient elements".to_string(),
+            ));
+        }
+        let t = Arc::new(
+            DenseMultilinearExtension::<E::ScalarField>::from_evaluations_slice(nv, table),
+        );
+        let h_t = DashMap::<E::ScalarField, E::ScalarField>::new();
+        for val in table.iter() {
+            *h_t.entry(*val).or_insert_with(E::ScalarField::zero) += E::ScalarField::one();
+        }
+        Ok(PreprocessedTable {
+            table: Vec::from(table),
+            table_map: h_t,
+            t,
+        })
+    }
+
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        t: &Self::MultilinearExtension,
+        preprocessed_table: &PreprocessedTable<E::ScalarField, E::ScalarField>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
@@ -99,7 +129,8 @@ where
         let f_comm = PCS::commit(pcs_param, f)?;
         transcript.append_serializable_element(b"f_comm", &f_comm)?;
 
-        let m_poly = compute_multiplicity_poly(f, t)?;
+        let m_poly =
+            compute_multiplicity_poly(f, &preprocessed_table.t, &preprocessed_table.table_map)?;
         let m_comm = PCS::commit(pcs_param, &m_poly)?;
         transcript.append_serializable_element(b"m_comm", &m_comm)?;
 
@@ -108,7 +139,7 @@ where
         //      B(x) = 1 / (beta + f(x))
         let beta = transcript.get_and_append_challenge(b"beta")?;
 
-        let a_poly = compute_a(&m_poly, t, &beta)?;
+        let a_poly = compute_a(&m_poly, &preprocessed_table.t, &beta)?;
         let b_poly = compute_b(f, &beta)?;
 
         let a_comm = PCS::commit(pcs_param, &a_poly)?;
@@ -119,7 +150,15 @@ where
 
         // 3) Build batched virtual polynomial p + alpha * q
         let alpha = transcript.get_and_append_challenge(b"alpha")?;
-        let pq = build_pq_virtual(&a_poly, &b_poly, f, t, &m_poly, &alpha, &beta)?;
+        let pq = build_pq_virtual(
+            &a_poly,
+            &b_poly,
+            f,
+            &preprocessed_table.t,
+            &m_poly,
+            &alpha,
+            &beta,
+        )?;
 
         let zc_proof = <Self as ZeroCheck<E::ScalarField>>::prove(&pq, transcript)?;
 
@@ -181,6 +220,7 @@ mod test {
     use super::LookupCheck;
     use super::LookupCheckSubClaim;
     use crate::poly_iop::zero_check::ZeroCheckSubClaim;
+    use crate::PreprocessedTable;
     use crate::{
         pcs::{prelude::MultilinearKzgPCS, PolynomialCommitmentScheme},
         poly_iop::{errors::PolyIOPErrors, PolyIOP},
@@ -266,7 +306,7 @@ mod test {
 
     fn test_lookup_check_helper<E, PCS>(
         f: &Arc<DenseMultilinearExtension<E::ScalarField>>,
-        t: &Arc<DenseMultilinearExtension<E::ScalarField>>,
+        preprocessed_table: &PreprocessedTable<E::ScalarField, E::ScalarField>,
         pcs_param: &PCS::ProverParam,
     ) -> Result<(), PolyIOPErrors>
     where
@@ -284,7 +324,7 @@ mod test {
             <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::prove(
                 pcs_param,
                 f,
-                t,
+                preprocessed_table,
                 &mut transcript,
             )?;
 
@@ -317,13 +357,20 @@ mod test {
             &mut transcript,
         )?;
 
-        check_a_b::<E::ScalarField>(&a_poly, &b_poly, t, f, &m_poly, challenges.0);
+        check_a_b::<E::ScalarField>(
+            &a_poly,
+            &b_poly,
+            &preprocessed_table.t,
+            f,
+            &m_poly,
+            challenges.0,
+        );
 
         check_p_q(
             &zero_check_sub_claim,
             &a_poly,
             &b_poly,
-            t,
+            &preprocessed_table.t,
             f,
             &m_poly,
             challenges.0,
@@ -350,9 +397,10 @@ mod test {
         let mut table = half_table.evaluations;
         table.append(&mut vec![table[half_n - 1]; half_n]);
 
-        let t = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_slice(
-            num_vars, &table,
-        ));
+        let preprocessed_table = <PolyIOP<Fr> as LookupCheck<
+            Bls12_381,
+            MultilinearKzgPCS<Bls12_381>,
+        >>::preprocess_table(num_vars, &table)?;
 
         // 2) Generate lookups
         let lookups = (0..half_n)
@@ -368,7 +416,11 @@ mod test {
         let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(num_vars))?;
 
         // 4) Generate proof & verify proof
-        test_lookup_check_helper::<Bls12_381, MultilinearKzgPCS<Bls12_381>>(&f, &t, &pcs_param)?;
+        test_lookup_check_helper::<Bls12_381, MultilinearKzgPCS<Bls12_381>>(
+            &f,
+            &preprocessed_table,
+            &pcs_param,
+        )?;
 
         Ok(())
     }

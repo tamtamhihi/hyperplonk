@@ -86,10 +86,10 @@ mod test {
 
     #[test]
     fn test_build_l_with_suffix() -> Result<(), ArithErrors> {
-        test_build_l_with_suffix_helper::<Fr>()
+        test_build_l_with_suffix_helper()
     }
 
-    fn test_build_l_with_suffix_helper<F: PrimeField>() -> Result<(), ArithErrors> {
+    fn test_build_l_with_suffix_helper() -> Result<(), ArithErrors> {
         // point 1 is [1, 2]
         let point1 = vec![Fr::from(1u64), Fr::from(2u64)];
 
@@ -228,10 +228,10 @@ mod test {
 
     #[test]
     fn test_build_l() -> Result<(), ArithErrors> {
-        test_build_l_helper::<Fr>()
+        test_build_l_helper()
     }
 
-    fn test_build_l_helper<F: PrimeField>() -> Result<(), ArithErrors> {
+    fn test_build_l_helper() -> Result<(), ArithErrors> {
         // point 1 is [1, 2]
         let point1 = vec![Fr::from(1u64), Fr::from(2u64)];
 

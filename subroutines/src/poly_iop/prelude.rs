@@ -5,7 +5,16 @@
 // along with the HyperPlonk library. If not, see <https://mit-license.org/>.
 
 pub use crate::poly_iop::{
-    errors::PolyIOPErrors, lookup_check::LookupCheck, plookup_check::PlookupCheck, 
-    perm_check::PermutationCheck, prod_check::ProductCheck, structs::IOPProof, 
-    sum_check::SumCheck, utils::*, zero_check::ZeroCheck, PolyIOP,
+    errors::PolyIOPErrors,
+    lookup::{
+        lookup_check::LookupCheck, plookup_check::utils::embed, plookup_check::PlookupCheck,
+        structs::PreprocessedTable,
+    },
+    perm_check::PermutationCheck,
+    prod_check::ProductCheck,
+    structs::IOPProof,
+    sum_check::SumCheck,
+    utils::*,
+    zero_check::ZeroCheck,
+    PolyIOP,
 };

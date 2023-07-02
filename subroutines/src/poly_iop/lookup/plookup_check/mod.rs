@@ -7,6 +7,8 @@ use transcript::IOPTranscript;
 
 pub mod utils;
 use self::utils::{compute_h, compute_poly_delta, embed};
+use super::structs::PreprocessedTable;
+use dashmap::DashMap;
 
 pub trait PlookupCheck<E, PCS>: ProductCheck<E, PCS>
 where
@@ -18,11 +20,16 @@ where
 
     fn init_transcript() -> Self::Transcript;
 
+    fn preprocess_table(
+        nv: usize,
+        table: &[E::ScalarField],
+    ) -> Result<PreprocessedTable<E::ScalarField, usize>, PolyIOPErrors>;
+
+    #[allow(clippy::type_complexity)]
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        t: &Self::MultilinearExtension,
-        table: &Vec<E::ScalarField>,
+        preprocessed_table: &PreprocessedTable<E::ScalarField, usize>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
@@ -76,11 +83,33 @@ where
         IOPTranscript::<E::ScalarField>::new(b"Initializing PlookupCheck transcript")
     }
 
+    fn preprocess_table(
+        nv: usize,
+        table: &[E::ScalarField],
+    ) -> Result<PreprocessedTable<E::ScalarField, usize>, PolyIOPErrors> {
+        if table.len() != (1 << nv) - 1 {
+            return Err(PolyIOPErrors::InvalidParameters(
+                "Table size is not in from of ".to_string(),
+            ));
+        };
+
+        let t = embed(table, nv)?;
+
+        let h_t = DashMap::<E::ScalarField, usize>::new();
+        for val in table.iter() {
+            *h_t.entry(*val).or_insert_with(|| 0) += 1;
+        }
+        Ok(PreprocessedTable {
+            table: Vec::from(table),
+            table_map: h_t,
+            t,
+        })
+    }
+
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        t: &Self::MultilinearExtension, // this is t_emb generated from indexer
-        table: &Vec<E::ScalarField>, 
+        preprocessed_table: &PreprocessedTable<E::ScalarField, usize>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
@@ -90,11 +119,11 @@ where
         ),
         PolyIOPErrors,
     > {
-        let num_vars = t.num_vars;
+        let num_vars = f.num_vars;
 
         // h is vector
         // num elements: 2^{mu + 1} - 1
-        let h = compute_h(&f, &table)?;
+        let h = compute_h(f, &preprocessed_table.table)?;
 
         // num vars: nv + 1
         let h_emb = embed(&h, num_vars + 1)?;
@@ -103,16 +132,16 @@ where
 
         // polynomial g1 = merge(f,t)
         // num vars: nv + 1
-        let g1 = merge_polynomials(&[f.clone(), t.clone()])?;
+        let g1 = merge_polynomials(&[f.clone(), preprocessed_table.t.clone()])?;
         let g1_comm = PCS::commit(pcs_param, &g1)?;
         transcript.append_serializable_element(b"g1_comm", &g1_comm)?;
 
         // num vars: nv
-        let t_delta = compute_poly_delta(&t, num_vars)?;
+        let t_delta = compute_poly_delta(&preprocessed_table.t, num_vars)?;
 
         // polynomial g2 = merge(f, t_delta)
         // num vars: nv + 1
-        let g2 = merge_polynomials(&[f.clone(), t_delta.clone()])?;
+        let g2 = merge_polynomials(&[f.clone(), t_delta])?;
         let g2_comm = PCS::commit(pcs_param, &g2)?;
         transcript.append_serializable_element(b"g2_comm", &g2_comm)?;
 
@@ -154,12 +183,12 @@ where
             denominator_evals,
         ));
 
-        let (proof, prod_poly, frac_poly) = 
-                <Self as ProductCheck<E, PCS>>::prove(
-                    pcs_param,
-                    &[numerator],
-                    &[denominator],
-                    transcript,)?;
+        let (proof, prod_poly, frac_poly) = <Self as ProductCheck<E, PCS>>::prove(
+            pcs_param,
+            &[numerator],
+            &[denominator],
+            transcript,
+        )?;
 
         Ok((
             PlookupCheckProof {
@@ -209,19 +238,19 @@ mod test {
     use arithmetic::{evaluate_opt, VPAuxInfo};
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_ec::pairing::Pairing;
-    use ark_ff::PrimeField;
-    use ark_poly::{DenseMultilinearExtension};
+    use ark_poly::DenseMultilinearExtension;
     use ark_std::test_rng;
 
-    use crate::{MultilinearKzgPCS, PolyIOP, PolyIOPErrors, PolynomialCommitmentScheme};
+    use crate::{
+        MultilinearKzgPCS, PolyIOP, PolyIOPErrors, PolynomialCommitmentScheme, PreprocessedTable,
+    };
 
-    use super::{PlookupCheck, utils::embed};
+    use super::PlookupCheck;
 
     fn test_plookup_check_helper<E, PCS>(
         pcs_param: &PCS::ProverParam,
         f: &Arc<DenseMultilinearExtension<E::ScalarField>>,
-        t: &Arc<DenseMultilinearExtension<E::ScalarField>>,
-        table: &Vec<E::ScalarField>,
+        preprocessed_table: &PreprocessedTable<E::ScalarField, usize>,
     ) -> Result<(), PolyIOPErrors>
     where
         E: Pairing,
@@ -234,21 +263,18 @@ mod test {
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
         // 1) Generate proof
-        let (proof, 
-            prod_poly, 
-            _frac_poly) =
+        let (proof, prod_poly, _frac_poly) =
             <PolyIOP<E::ScalarField> as PlookupCheck<E, PCS>>::prove(
                 pcs_param,
-                &f,
-                &t,
-                table,
+                f,
+                preprocessed_table,
                 &mut transcript,
             )?;
 
         // 2) Verify the proof
         let mut transcript = <PolyIOP<E::ScalarField> as PlookupCheck<E, PCS>>::init_transcript();
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
-        
+
         // pc_aux_infor for poly g1, g2, h, h_delta
         // num_variables = num_vars + 1
         let pc_aux_infor: VPAuxInfo<E::ScalarField> = VPAuxInfo {
@@ -264,8 +290,10 @@ mod test {
         )?;
 
         // check product subclaim
-        if evaluate_opt(&prod_poly, &plookup_check_subclaim.product_check_subclaim.final_query.0)
-            != plookup_check_subclaim.product_check_subclaim.final_query.1
+        if evaluate_opt(
+            &prod_poly,
+            &plookup_check_subclaim.product_check_subclaim.final_query.0,
+        ) != plookup_check_subclaim.product_check_subclaim.final_query.1
         {
             return Err(PolyIOPErrors::InvalidVerifier("wrong subclaim".to_string()));
         };
@@ -273,20 +301,16 @@ mod test {
         Ok(())
     }
 
-    fn test_plookup_check<F: PrimeField>(nv: usize) -> Result<(), PolyIOPErrors> {
+    fn test_plookup_check(nv: usize) -> Result<(), PolyIOPErrors> {
         let mut rng = test_rng();
 
-        
         // generate the table, whose each element is distinct
-        let table = (1..(1 << nv))
-            .map(|value| Fr::from(value))
-            .collect::<Vec<_>>();
+        let table = (1..(1 << nv)).map(Fr::from).collect::<Vec<_>>();
 
-        // t_emb <- Emb(table)
-        let t_emb = embed::<Fr>(
-            &table, 
-            nv, 
-        )?;
+        let preprocessed_table = <PolyIOP<Fr> as PlookupCheck<
+            Bls12_381,
+            MultilinearKzgPCS<Bls12_381>,
+        >>::preprocess_table(nv, &table)?;
 
         // generate lookups
         let half_nv = 1 << (nv - 1);
@@ -295,36 +319,36 @@ mod test {
             .collect::<Vec<_>>()
             .concat();
 
-        let f = Arc::new(
-            DenseMultilinearExtension::<Fr>::from_evaluations_vec(
-            nv, 
-            lookups
+        let f = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_vec(
+            nv, lookups,
         ));
 
         // generate srs
         let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, nv + 1)?;
-        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(&srs, None, Some(nv + 1))?;
-
+        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(nv + 1))?;
 
         // generate proof & verify proof
         test_plookup_check_helper::<Bls12_381, MultilinearKzgPCS<Bls12_381>>(
-            &pcs_param, &f, &t_emb, &table)?;
+            &pcs_param,
+            &f,
+            &preprocessed_table,
+        )?;
 
         Ok(())
     }
 
     #[test]
     fn test_4() -> Result<(), PolyIOPErrors> {
-        test_plookup_check::<Fr>(4)
+        test_plookup_check(4)
     }
 
     #[test]
     fn test_10() -> Result<(), PolyIOPErrors> {
-        test_plookup_check::<Fr>(10)
+        test_plookup_check(10)
     }
 
     #[test]
     fn test_15() -> Result<(), PolyIOPErrors> {
-        test_plookup_check::<Fr>(15)
+        test_plookup_check(15)
     }
 }

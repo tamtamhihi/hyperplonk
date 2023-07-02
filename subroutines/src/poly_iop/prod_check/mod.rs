@@ -386,7 +386,7 @@ mod test {
         }
 
         let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, nv)?;
-        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(&srs, None, Some(nv))?;
+        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(nv))?;
 
         test_product_check_helper::<Bls12_381, MultilinearKzgPCS<Bls12_381>>(
             &fs, &gs, &hs, &pcs_param,

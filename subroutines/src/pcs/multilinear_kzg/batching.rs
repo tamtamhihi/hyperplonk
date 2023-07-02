@@ -304,7 +304,7 @@ mod tests {
 
         let commitments = polys
             .iter()
-            .map(|poly| MultilinearKzgPCS::commit(&ml_ck.clone(), poly).unwrap())
+            .map(|poly| MultilinearKzgPCS::commit(ml_ck.clone(), poly).unwrap())
             .collect::<Vec<_>>();
 
         let mut transcript = IOPTranscript::new("test transcript".as_ref());

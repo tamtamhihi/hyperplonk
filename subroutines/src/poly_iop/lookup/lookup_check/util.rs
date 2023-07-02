@@ -19,6 +19,7 @@ use ark_std::collections::HashMap;
 pub(super) fn compute_multiplicity_poly<F: PrimeField>(
     f: &Arc<DenseMultilinearExtension<F>>,
     t: &Arc<DenseMultilinearExtension<F>>,
+    h_t: &DashMap<F, F>,
 ) -> Result<Arc<DenseMultilinearExtension<F>>, PolyIOPErrors> {
     assert!(
         f.num_vars == t.num_vars,
@@ -29,12 +30,8 @@ pub(super) fn compute_multiplicity_poly<F: PrimeField>(
     #[cfg(feature = "parallel")]
     return {
         let h_f = DashMap::<F, F>::new();
-        let h_t = DashMap::<F, F>::new();
 
         // Count number of occurences of each elements
-        t.evaluations.par_iter().for_each(|num| {
-            *h_t.entry(*num).or_insert_with(F::zero) += F::one();
-        });
         f.evaluations
             .par_iter()
             .map(|num| -> Result<(), PolyIOPErrors> {
@@ -285,8 +282,12 @@ mod test {
             nv,
             convert_usize_to_field(&[1, 2, 3, 4, 4, 4, 4, 4]),
         ));
-
-        let m = compute_multiplicity_poly(&f, &t)?;
+        let h_t = DashMap::new();
+        for val in 1..4 {
+            h_t.insert(Fr::from(val), Fr::from(1));
+        }
+        h_t.insert(Fr::from(4), Fr::from(5));
+        let m = compute_multiplicity_poly(&f, &t, &h_t)?;
         let mut expected_m = vec![Fr::from(3), Fr::from(2), Fr::from(2)];
         expected_m.append(&mut vec![Fr::from(1) / Fr::from(5); 5]);
         assert_eq!(

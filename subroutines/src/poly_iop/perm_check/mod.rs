@@ -262,7 +262,7 @@ mod test {
         let mut rng = test_rng();
 
         let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, nv)?;
-        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(&srs, None, Some(nv))?;
+        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(nv))?;
         let id_perms = identity_permutation_mles(nv, 2);
 
         {

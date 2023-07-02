@@ -13,6 +13,9 @@ use ark_poly::DenseMultilinearExtension;
 use ark_std::{end_timer, start_timer};
 use std::sync::Arc;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+
 /// Returns the evaluations of two list of MLEs:
 /// - numerators = (a1, ..., ak)
 /// - denominators = (b1, ..., bk)
@@ -43,33 +46,74 @@ pub(super) fn computer_nums_and_denoms<F: PrimeField>(
     let start = start_timer!(|| "compute numerators and denominators");
 
     let num_vars = fxs[0].num_vars;
-    let mut numerators = vec![];
-    let mut denominators = vec![];
     let s_ids = identity_permutation_mles::<F>(num_vars, fxs.len());
-    for l in 0..fxs.len() {
-        let mut numerator_evals = vec![];
-        let mut denominator_evals = vec![];
 
-        for (&f_ev, (&g_ev, (&s_id_ev, &perm_ev))) in fxs[l]
-            .iter()
-            .zip(gxs[l].iter().zip(s_ids[l].iter().zip(perms[l].iter())))
-        {
-            let numerator = f_ev + *beta * s_id_ev + gamma;
-            let denominator = g_ev + *beta * perm_ev + gamma;
+    #[cfg(feature = "parallel")]
+    return {
+        let numerators = fxs
+            .par_iter()
+            .zip(s_ids.par_iter())
+            .map(|(f, s_id)| {
+                Arc::new(DenseMultilinearExtension::from_evaluations_vec(
+                    num_vars,
+                    f.evaluations
+                        .par_iter()
+                        .zip(s_id.evaluations.par_iter())
+                        .map(|(&f_ev, &s_id_ev)| f_ev + *beta * s_id_ev + gamma)
+                        .collect::<Vec<_>>(),
+                ))
+            })
+            .collect::<Vec<_>>();
 
-            numerator_evals.push(numerator);
-            denominator_evals.push(denominator);
+        let denominators = gxs
+            .par_iter()
+            .zip(perms.par_iter())
+            .map(|(g, perm)| {
+                Arc::new(DenseMultilinearExtension::from_evaluations_vec(
+                    num_vars,
+                    g.evaluations
+                        .par_iter()
+                        .zip(perm.evaluations.par_iter())
+                        .map(|(&g_ev, &perm_ev)| g_ev + *beta * perm_ev + gamma)
+                        .collect::<Vec<_>>(),
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        end_timer!(start);
+        Ok((numerators, denominators))
+    };
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut numerators = vec![];
+        let mut denominators = vec![];
+
+        for l in 0..fxs.len() {
+            let mut numerator_evals = vec![];
+            let mut denominator_evals = vec![];
+
+            for (&f_ev, (&g_ev, (&s_id_ev, &perm_ev))) in fxs[l]
+                .iter()
+                .zip(gxs[l].iter().zip(s_ids[l].iter().zip(perms[l].iter())))
+            {
+                let numerator = f_ev + *beta * s_id_ev + gamma;
+                let denominator = g_ev + *beta * perm_ev + gamma;
+
+                numerator_evals.push(numerator);
+                denominator_evals.push(denominator);
+            }
+            numerators.push(Arc::new(DenseMultilinearExtension::from_evaluations_vec(
+                num_vars,
+                numerator_evals,
+            )));
+            denominators.push(Arc::new(DenseMultilinearExtension::from_evaluations_vec(
+                num_vars,
+                denominator_evals,
+            )));
         }
-        numerators.push(Arc::new(DenseMultilinearExtension::from_evaluations_vec(
-            num_vars,
-            numerator_evals,
-        )));
-        denominators.push(Arc::new(DenseMultilinearExtension::from_evaluations_vec(
-            num_vars,
-            denominator_evals,
-        )));
-    }
 
-    end_timer!(start);
-    Ok((numerators, denominators))
+        end_timer!(start);
+        Ok((numerators, denominators))
+    }
 }

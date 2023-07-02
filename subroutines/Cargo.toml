@@ -12,6 +12,7 @@ ark-ff = { version = "^0.4.0", default-features = false }
 ark-poly = { version = "^0.4.0", default-features = false }
 ark-serialize =  { version = "^0.4.0", default-features = false }
 ark-std = { version = "^0.4.0", default-features = false }
+dashmap = { version = "5.4.0", features = ["rayon"], optional = true }
 derivative = { version = "2", features = ["use_core"] }
 displaydoc = { version = "0.2.3", default-features = false }
 itertools = { version = "0.10.4", optional = true }
@@ -19,17 +20,18 @@ rand_chacha = { version = "0.3.0", default-features = false }
 rayon = { version = "1.5.2", default-features = false, optional = true }
 transcript = { path = "../transcript" }
 util = { path = "../util" }
-# # Benchmarks
-# [[bench]]
-# name = "poly-iop-benches"
-# path = "benches/iop_bench.rs"
-# harness = false
 
 # Benchmarks
 [[bench]]
-name = "pcs-benches"
-path = "benches/pcs_bench.rs"
+name = "poly-iop-benches"
+path = "benches/iop_bench.rs"
 harness = false
+
+# Benchmarks
+# [[bench]]
+# name = "pcs-benches"
+# path = "benches/pcs_bench.rs"
+# harness = false
 
 [features]
 # default = [ "parallel", "print-trace" ]
@@ -45,6 +47,7 @@ parallel = [
     "ark-ec/parallel",
     "util/parallel",
     "arithmetic/parallel",
+    "dashmap",
     ]
 print-trace = [ 
     "arithmetic/print-trace",

@@ -21,12 +21,12 @@ use subroutines::{
     poly_iop::PolyIOP,
 };
 
-const SUPPORTED_SIZE: usize = 10;
+const SUPPORTED_SIZE: usize = 15;
 const MIN_NUM_VARS: usize = 5;
-const MAX_NUM_VARS: usize = 10;
+const MAX_NUM_VARS: usize = 15;
 const MIN_CUSTOM_DEGREE: usize = 1;
 const MAX_CUSTOM_DEGREE: usize = 32;
-const HIGH_DEGREE_TEST_NV: usize = 15;
+const HIGH_DEGREE_TEST_NV: usize = 10;
 
 fn main() -> Result<(), HyperPlonkErrors> {
     let thread = rayon::current_num_threads();
@@ -129,21 +129,21 @@ fn bench_mock_circuit_zkp_helper(
     //==========================================================
     // generate pk and vks
     let start = Instant::now();
-    for _ in 0..repetition {
+    for _ in 0..(repetition - 1) {
         let (_pk, _vk) = <PolyIOP<Fr> as HyperPlonkSNARK<
             Bls12_381,
             MultilinearKzgPCS<Bls12_381>,
         >>::preprocess(&index, pcs_srs)?;
     }
+    let (pk, vk) =
+        <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::preprocess(
+            &index, pcs_srs,
+        )?;
     println!(
         "key extraction for {} variables: {} us",
         nv,
         start.elapsed().as_micros() / repetition as u128
     );
-    let (pk, vk) =
-        <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::preprocess(
-            &index, pcs_srs,
-        )?;
     //==========================================================
     // generate a proof
     let start = Instant::now();

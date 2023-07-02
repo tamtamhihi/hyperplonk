@@ -14,12 +14,16 @@ use crate::poly_iop::{
 use arithmetic::{fix_variables, VirtualPolynomial};
 use ark_ff::{batch_inversion, PrimeField};
 use ark_poly::DenseMultilinearExtension;
-use ark_std::{cfg_into_iter, end_timer, start_timer, vec::Vec};
-use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator};
+use ark_std::{end_timer, start_timer, vec::Vec};
 use std::sync::Arc;
 
 #[cfg(feature = "parallel")]
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+use ark_std::cfg_into_iter;
+#[cfg(feature = "parallel")]
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
+    IntoParallelRefMutIterator, ParallelIterator,
+};
 
 impl<F: PrimeField> SumCheckProver<F> for IOPProverState<F> {
     type VirtualPolynomial = VirtualPolynomial<F>;
@@ -120,6 +124,7 @@ impl<F: PrimeField> SumCheckProver<F> for IOPProverState<F> {
         // Step 2: generate sum for the partial evaluated polynomial:
         // f(r_1, ... r_m,, x_{m+1}... x_n)
 
+        #[cfg(feature = "parallel")]
         products_list.iter().for_each(|(coefficient, products)| {
             let mut sum = cfg_into_iter!(0..1 << (self.poly.aux_info.num_variables - self.round))
                 .fold(
@@ -130,14 +135,14 @@ impl<F: PrimeField> SumCheckProver<F> for IOPProverState<F> {
                         )
                     },
                     |(mut buf, mut acc), b| {
-                        buf.iter_mut()
-                            .zip(products.iter())
-                            .for_each(|((eval, step), f)| {
+                        buf.par_iter_mut().zip(products.par_iter()).for_each(
+                            |((eval, step), f)| {
                                 let table = &flattened_ml_extensions[*f];
                                 *eval = table[b << 1];
                                 *step = table[(b << 1) + 1] - table[b << 1];
-                            });
-                        acc[0] += buf.iter().map(|(eval, _)| eval).product::<F>();
+                            },
+                        );
+                        acc[0] += buf.par_iter().map(|(eval, _)| eval).product::<F>();
                         acc[1..].iter_mut().for_each(|acc| {
                             buf.iter_mut().for_each(|(eval, step)| *eval += step as &_);
                             *acc += buf.iter().map(|(eval, _)| eval).product::<F>();
@@ -149,8 +154,8 @@ impl<F: PrimeField> SumCheckProver<F> for IOPProverState<F> {
                 .reduce(
                     || vec![F::zero(); products.len() + 1],
                     |mut sum, partial| {
-                        sum.iter_mut()
-                            .zip(partial.iter())
+                        sum.par_iter_mut()
+                            .zip(partial.par_iter())
                             .for_each(|(sum, partial)| *sum += partial);
                         sum
                     },
@@ -164,8 +169,8 @@ impl<F: PrimeField> SumCheckProver<F> for IOPProverState<F> {
                 })
                 .collect::<Vec<_>>();
             products_sum
-                .iter_mut()
-                .zip(sum.iter().chain(extraploation.iter()))
+                .par_iter_mut()
+                .zip(sum.par_iter().chain(extraploation.par_iter()))
                 .for_each(|(products_sum, sum)| *products_sum += sum);
         });
 
@@ -183,15 +188,14 @@ impl<F: PrimeField> SumCheckProver<F> for IOPProverState<F> {
 
 fn barycentric_weights<F: PrimeField>(points: &[F]) -> Vec<F> {
     let mut weights = points
-        .iter()
+        .par_iter()
         .enumerate()
         .map(|(j, point_j)| {
             points
-                .iter()
+                .par_iter()
                 .enumerate()
                 .filter_map(|(i, point_i)| (i != j).then(|| *point_j - point_i))
-                .reduce(|acc, value| acc * value)
-                .unwrap_or_else(F::one)
+                .reduce(|| F::one(), |acc, value| acc * value)
         })
         .collect::<Vec<_>>();
     batch_inversion(&mut weights);
@@ -200,16 +204,22 @@ fn barycentric_weights<F: PrimeField>(points: &[F]) -> Vec<F> {
 
 fn extrapolate<F: PrimeField>(points: &[F], weights: &[F], evals: &[F], at: &F) -> F {
     let (coeffs, sum_inv) = {
-        let mut coeffs = points.iter().map(|point| *at - point).collect::<Vec<_>>();
+        let mut coeffs = points
+            .par_iter()
+            .map(|point| *at - point)
+            .collect::<Vec<_>>();
         batch_inversion(&mut coeffs);
-        coeffs.iter_mut().zip(weights).for_each(|(coeff, weight)| {
-            *coeff *= weight;
-        });
-        let sum_inv = coeffs.iter().sum::<F>().inverse().unwrap_or_default();
+        coeffs
+            .par_iter_mut()
+            .zip(weights)
+            .for_each(|(coeff, weight)| {
+                *coeff *= weight;
+            });
+        let sum_inv = coeffs.par_iter().sum::<F>().inverse().unwrap_or_default();
         (coeffs, sum_inv)
     };
     coeffs
-        .iter()
+        .par_iter()
         .zip(evals)
         .map(|(coeff, eval)| *coeff * eval)
         .sum::<F>()

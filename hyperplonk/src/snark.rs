@@ -716,7 +716,7 @@ where
             phantom: PhantomData::default(),
         };
         let zc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
-            max_degree: 3,
+            max_degree: 2,
             num_variables: num_vars,
             phantom: PhantomData::default(),
         };

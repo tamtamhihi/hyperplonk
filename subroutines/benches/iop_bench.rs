@@ -14,18 +14,24 @@ use subroutines::{
     poly_iop::prelude::{
         PermutationCheck, PolyIOP, PolyIOPErrors, ProductCheck, SumCheck, ZeroCheck,
     },
+    LookupCheck,
 };
 
 type Kzg = MultilinearKzgPCS<Bls12_381>;
 
 fn main() -> Result<(), PolyIOPErrors> {
-    bench_permutation_check()?;
-    println!("\n\n");
-    bench_sum_check()?;
-    println!("\n\n");
-    bench_prod_check()?;
-    println!("\n\n");
-    bench_zero_check()
+    for argument in std::env::args() {
+        let arg = argument.to_lowercase();
+        match arg.as_str() {
+            "sum" => bench_sum_check()?,
+            "zero" => bench_zero_check()?,
+            "prod" => bench_prod_check()?,
+            "perm" => bench_permutation_check()?,
+            "lk" => bench_lookup_check()?,
+            _ => continue,
+        };
+    }
+    Ok(())
 }
 
 fn bench_sum_check() -> Result<(), PolyIOPErrors> {
@@ -265,6 +271,105 @@ fn bench_prod_check() -> Result<(), PolyIOPErrors> {
             )?;
             println!(
                 "product check verification time for {} variables: {} ns",
+                nv,
+                start.elapsed().as_nanos() / repetition as u128
+            );
+        }
+
+        println!("====================================");
+    }
+
+    Ok(())
+}
+
+fn bench_lookup_check() -> Result<(), PolyIOPErrors> {
+    let mut rng = test_rng();
+
+    for nv in 4..20 {
+        let srs = Kzg::gen_srs_for_testing(&mut rng, nv + 1)?;
+        let (pcs_param, _) = Kzg::trim(&srs, None, Some(nv + 1))?;
+
+        let repetition = if nv < 10 {
+            5
+        } else if nv < 20 {
+            2
+        } else {
+            1
+        };
+
+        let half_n = 1 << (nv - 1);
+        let half_table = DenseMultilinearExtension::<Fr>::rand(nv - 1, &mut rng);
+        let mut table = half_table.evaluations;
+        table.append(&mut vec![table[half_n - 1]; half_n]);
+        let t = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_slice(
+            nv, &table,
+        ));
+
+        let lookups = (0..half_n)
+            .map(|i| vec![table[i]; 2])
+            .collect::<Vec<_>>()
+            .concat();
+        let f = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_vec(
+            nv, lookups,
+        ));
+
+        let proof = {
+            let start = Instant::now();
+
+            for _ in 0..repetition {
+                let mut transcript =
+                    <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::init_transcript();
+                transcript.append_message(b"testing", b"initializing transcript for testing")?;
+
+                let (_, _, _, _) = <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::prove(
+                    &pcs_param,
+                    &f,
+                    &t,
+                    &mut transcript,
+                )?;
+            }
+            println!(
+                "lookup check proving time for {} variables: {} ns",
+                nv,
+                start.elapsed().as_nanos() / repetition as u128
+            );
+            let mut transcript = <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::init_transcript();
+            transcript.append_message(b"testing", b"initializing transcript for testing")?;
+            let (proof, _, _, _) = <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::prove(
+                &pcs_param,
+                &f,
+                &t,
+                &mut transcript,
+            )?;
+            proof
+        };
+
+        {
+            let zc_aux_info: VPAuxInfo<Fr> = VPAuxInfo {
+                max_degree: 2,
+                num_variables: nv,
+                phantom: PhantomData::default(),
+            };
+            let sc_aux_info: VPAuxInfo<Fr> = VPAuxInfo {
+                max_degree: 1,
+                num_variables: nv,
+                phantom: PhantomData::default(),
+            };
+
+            let start = Instant::now();
+            for _ in 0..repetition {
+                let mut transcript =
+                    <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::init_transcript();
+                transcript.append_message(b"testing", b"initializing transcript for testing")?;
+                let _perm_check_sum_claim = <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::verify(
+                    &proof,
+                    &zc_aux_info,
+                    &sc_aux_info,
+                    &mut transcript,
+                )?;
+            }
+            println!(
+                "lookup check verification time for {} variables: {} ns",
                 nv,
                 start.elapsed().as_nanos() / repetition as u128
             );

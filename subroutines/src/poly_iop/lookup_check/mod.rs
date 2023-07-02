@@ -1,9 +1,8 @@
 use crate::{PolyIOP, PolyIOPErrors, PolynomialCommitmentScheme, SumCheck, ZeroCheck};
 use arithmetic::VPAuxInfo;
 use ark_ec::pairing::Pairing;
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::{PrimeField, Zero};
 use ark_poly::DenseMultilinearExtension;
-use std::ops::Add;
 use std::sync::Arc;
 use transcript::IOPTranscript;
 
@@ -118,23 +117,11 @@ where
         transcript.append_serializable_element(b"a_comm", &a_comm)?;
         transcript.append_serializable_element(b"b_comm", &b_comm)?;
 
-        // 3) Build virtual polynomial p and q
-        let mut p = build_p_virtual(&a_poly, t, &m_poly, &beta)?;
-        let mut q = build_q_virtual(&b_poly, f, &beta)?;
-
-        // 4) Batch ZeroCheck for p and q
+        // 3) Build batched virtual polynomial p + alpha * q
         let alpha = transcript.get_and_append_challenge(b"alpha")?;
-        let num_vars = f.num_vars;
-        q.mul_by_mle(
-            Arc::new(DenseMultilinearExtension::from_evaluations_vec(
-                num_vars,
-                vec![E::ScalarField::one(); 1 << num_vars],
-            )),
-            alpha,
-        )?;
-        p = p.add(&q);
+        let pq = build_pq_virtual(&a_poly, &b_poly, f, t, &m_poly, &alpha, &beta)?;
 
-        let zc_proof = <Self as ZeroCheck<E::ScalarField>>::prove(&p, transcript)?;
+        let zc_proof = <Self as ZeroCheck<E::ScalarField>>::prove(&pq, transcript)?;
 
         // 5) SumCheck for L(x) = A(x) - B(x)
         let l = build_l_virtual(&a_poly, &b_poly)?;
@@ -305,10 +292,9 @@ mod test {
         let mut transcript = <PolyIOP<E::ScalarField> as LookupCheck<E, PCS>>::init_transcript();
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
-        // max_degree = 3, because p(A,m,t) + alpha * q(B,f)
-        //      As alpha is also expressed as a mle => max_degree = 3
+        // max_degree = 2, because p(A,m,t) + alpha * q(B,f)
         let zc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
-            max_degree: 3,
+            max_degree: 2,
             num_variables: f.num_vars(),
             phantom: PhantomData::default(),
         };

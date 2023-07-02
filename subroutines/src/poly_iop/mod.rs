@@ -9,6 +9,7 @@ use std::marker::PhantomData;
 
 mod errors;
 mod lookup_check;
+mod plookup_check;
 mod perm_check;
 pub mod prelude;
 mod prod_check;

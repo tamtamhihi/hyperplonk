@@ -6,10 +6,12 @@
 
 use crate::{
     errors::HyperPlonkErrors,
-    structs::{HyperPlonkIndex, HyperPlonkProof, HyperPlonkProvingKey, HyperPlonkVerifyingKey},
+    structs::{
+        HyperPlonkIndex, LogaHyperPlonkProof, LogaHyperPlonkProvingKey, LogaHyperPlonkVerifyingKey,
+    },
     utils::*,
     witness::WitnessColumn,
-    HyperPlonkSNARK,
+    LogaHyperPlonkSNARK,
 };
 use arithmetic::{evaluate_opt, gen_eval_point, VPAuxInfo};
 use ark_ec::pairing::Pairing;
@@ -25,11 +27,11 @@ use subroutines::{
         prelude::{PermutationCheck, ZeroCheck},
         PolyIOP,
     },
-    BatchProof, PlookupCheck,
+    BatchProof, LookupCheck,
 };
 use transcript::IOPTranscript;
 
-impl<E, PCS> HyperPlonkSNARK<E, PCS> for PolyIOP<E::ScalarField>
+impl<E, PCS> LogaHyperPlonkSNARK<E, PCS> for PolyIOP<E::ScalarField>
 where
     E: Pairing,
     // Ideally we want to access polynomial as PCS::Polynomial, instead of instantiating it here.
@@ -45,9 +47,9 @@ where
     >,
 {
     type Index = HyperPlonkIndex<E::ScalarField>;
-    type ProvingKey = HyperPlonkProvingKey<E, PCS>;
-    type VerifyingKey = HyperPlonkVerifyingKey<E, PCS>;
-    type Proof = HyperPlonkProof<E, Self, Self, PCS>;
+    type ProvingKey = LogaHyperPlonkProvingKey<E, PCS>;
+    type VerifyingKey = LogaHyperPlonkVerifyingKey<E, PCS>;
+    type Proof = LogaHyperPlonkProof<E, Self, Self, PCS>;
 
     fn preprocess(
         index: &Self::Index,
@@ -58,7 +60,7 @@ where
 
         // extract PCS prover and verifier keys from SRS
         let (pcs_prover_param, pcs_verifier_param) =
-            PCS::trim(pcs_srs, None, Some(supported_ml_degree + 1))?;
+            PCS::trim(pcs_srs, None, Some(supported_ml_degree))?;
 
         // build permutation oracles
         let mut permutation_oracles = vec![];
@@ -98,15 +100,12 @@ where
             .map(|poly| PCS::commit(&pcs_prover_param, poly))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let preprocessed_table = <Self as PlookupCheck<E, PCS>>::preprocess_table(
+        let preprocessed_table = <Self as LookupCheck<E, PCS>>::preprocess_table(
             &pcs_prover_param,
             num_vars,
             &index.table,
         )?;
-
-        let table_commitment = preprocessed_table.t_comm;
-        let table_delta_commitment = preprocessed_table.t_delta_comm;
-
+        let t_comm = preprocessed_table.t_comm;
         Ok((
             Self::ProvingKey {
                 params: index.params.clone(),
@@ -125,8 +124,7 @@ where
                 perm_commitments: perm_comms,
                 selector_commitments,
                 lk_selector_commitments,
-                table_commitment,
-                table_delta_commitment,
+                table_commitment: t_comm,
             },
         ))
     }
@@ -284,9 +282,9 @@ where
 
         end_timer!(step);
         // =======================================================================
-        // 4. Plookup Check for:
+        // 4. Lookup Check for:
         //       f_lk(q_lk_0(x), ..., q_lk_(x), w_0(x),...) in t
-        // We evaluate a virtual polynomial <f_lk> into a MLE <f> to run PlookupCheck.
+        // We evaluate a virtual polynomial <f_lk> into a MLE <f> to run LookupCheck.
         //
         // We then need to run a ZeroCheck on <f_lk(q_lks, ws) - f> to make sure
         // the virtual polynomial is encoded correctly as MLE.
@@ -301,14 +299,12 @@ where
         )?;
 
         let f_lk_mle = f_lk.to_mle()?;
-
-        let (plookup_check_proof, lk_prod_poly, lk_frac_poly, lk_h, lk_h_delta) =
-            <Self as PlookupCheck<E, PCS>>::prove(
-                &pk.pcs_param,
-                &f_lk_mle,
-                &pk.preprocessed_table,
-                &mut transcript,
-            )?;
+        let (lookup_check_proof, m_poly, a_poly, b_poly) = <Self as LookupCheck<E, PCS>>::prove(
+            &pk.pcs_param,
+            &f_lk_mle,
+            &pk.preprocessed_table,
+            &mut transcript,
+        )?;
 
         f_lk.add_mle_list(vec![Arc::clone(&f_lk_mle)], -E::ScalarField::one())?;
         let lookup_zc_proof = <Self as ZeroCheck<E::ScalarField>>::prove(&f_lk, &mut transcript)?;
@@ -419,87 +415,49 @@ where
 
         //// 3. LookupCheck & LookupZC Check
 
-        // We use second accumulators to store the (nv + 1)-variates polynomials and their eval points.
-        // They are batch opened at a later stage.
-        let mut pcs_acc_nv_one = PcsAccumulator::<E, PCS>::new(num_vars + 1);
-
-        let lk_prod_check_point = &plookup_check_proof
-            .product_check_proof
-            .zero_check_proof
-            .point;
-        let lk_prod_check_point_0 =
-            [&[E::ScalarField::zero()], &lk_prod_check_point[0..num_vars]].concat();
-        let lk_prod_check_point_1 =
-            [&[E::ScalarField::one()], &lk_prod_check_point[0..num_vars]].concat();
-
-        // Open prod_poly
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_prod_poly,
-            &plookup_check_proof.product_check_proof.prod_x_comm,
-            lk_prod_check_point,
+        //---- Openings of a,b for sumcheck inside lookup check
+        pcs_acc.insert_poly_and_points(
+            &a_poly,
+            &lookup_check_proof.a_comm,
+            &lookup_check_proof.sc_proof.point,
         );
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_prod_poly,
-            &plookup_check_proof.product_check_proof.prod_x_comm,
-            &lk_prod_check_point_0,
-        );
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_prod_poly,
-            &plookup_check_proof.product_check_proof.prod_x_comm,
-            &lk_prod_check_point_1,
-        );
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_prod_poly,
-            &plookup_check_proof.product_check_proof.prod_x_comm,
-            &[prod_final_query_point, vec![E::ScalarField::one()]].concat(),
+        pcs_acc.insert_poly_and_points(
+            &b_poly,
+            &lookup_check_proof.b_comm,
+            &lookup_check_proof.sc_proof.point,
         );
 
-        // Open frac_poly
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_frac_poly,
-            &plookup_check_proof.product_check_proof.frac_comm,
-            lk_prod_check_point,
+        //---- Openings of f_lk_mle, m, t for zerocheck inside lookup check
+        pcs_acc.insert_poly_and_points(
+            &a_poly,
+            &lookup_check_proof.a_comm,
+            &lookup_check_proof.zc_proof.point,
         );
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_frac_poly,
-            &plookup_check_proof.product_check_proof.frac_comm,
-            &lk_prod_check_point_0,
+        pcs_acc.insert_poly_and_points(
+            &b_poly,
+            &lookup_check_proof.b_comm,
+            &lookup_check_proof.zc_proof.point,
         );
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_frac_poly,
-            &plookup_check_proof.product_check_proof.frac_comm,
-            &lk_prod_check_point_1,
+        pcs_acc.insert_poly_and_points(
+            &Arc::clone(&f_lk_mle),
+            &lookup_check_proof.f_comm,
+            &lookup_check_proof.zc_proof.point,
         );
-        // Open g1(f, t), g2(f, tdelta), h, hdelta at lk_perm_check_point
-        // Open f, t, tdelta at lk_perm_check_point[..nv]
-        let prod_check_point_nv = &lk_prod_check_point[..num_vars].to_vec();
-        pcs_acc.insert_poly_and_points(&f_lk_mle, &plookup_check_proof.f_comm, prod_check_point_nv);
+        pcs_acc.insert_poly_and_points(
+            &m_poly,
+            &lookup_check_proof.m_comm,
+            &lookup_check_proof.zc_proof.point,
+        );
         pcs_acc.insert_poly_and_points(
             &pk.preprocessed_table.t,
             &pk.preprocessed_table.t_comm,
-            prod_check_point_nv,
-        );
-        pcs_acc.insert_poly_and_points(
-            &pk.preprocessed_table.t_delta,
-            &pk.preprocessed_table.t_delta_comm,
-            prod_check_point_nv,
-        );
-        // Open h, hdelta at lk_perm_check_point
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_h,
-            &plookup_check_proof.h_comm,
-            lk_prod_check_point,
-        );
-        pcs_acc_nv_one.insert_poly_and_points(
-            &lk_h_delta,
-            &plookup_check_proof.h_delta_comm,
-            lk_prod_check_point,
+            &lookup_check_proof.zc_proof.point,
         );
 
         //---- Openings of f_lk_mle, q_lk_0..., w_0... for zero check of (f_lk - f_lk_mle)
         let lk_zc_point = &lookup_zc_proof.point;
 
-        pcs_acc.insert_poly_and_points(&f_lk_mle, &plookup_check_proof.f_comm, lk_zc_point);
+        pcs_acc.insert_poly_and_points(&f_lk_mle, &lookup_check_proof.f_comm, lk_zc_point);
         pk.lk_selector_oracles
             .iter()
             .zip(pk.lk_selector_commitments.iter())
@@ -520,20 +478,19 @@ where
 
         end_timer!(step);
         // =======================================================================
-        // 5. deferred batch opening
+        // 6. deferred batch opening
         // =======================================================================
         let step = start_timer!(|| "deferred batch openings prod(x)");
         let batch_openings = pcs_acc.multi_open(&pk.pcs_param, &mut transcript)?;
-        let batch_openings_nv_one = pcs_acc_nv_one.multi_open(&pk.pcs_param, &mut transcript)?;
         end_timer!(step);
 
         end_timer!(start);
 
-        Ok(HyperPlonkProof {
+        Ok(LogaHyperPlonkProof {
             // PCS commit for witnesses
             witness_commits,
             // batch_openings,
-            batch_openings: vec![batch_openings, batch_openings_nv_one],
+            batch_openings,
             // =======================================================================
             // IOP proofs
             // =======================================================================
@@ -542,7 +499,7 @@ where
             // the permutation check proof for copy constraints
             perm_check_proof,
             // lookup check proof
-            lookup_check_proof: plookup_check_proof,
+            lookup_check_proof,
             // zero check proof for lookup MLE
             lookup_zc_proof,
         })
@@ -627,10 +584,8 @@ where
         // 0'. Extract evaluations from openings
         // =======================================================================
 
-        let batch_evals = &proof.batch_openings[0].f_i_eval_at_point_i;
-        let batch_evals_nv_one = &proof.batch_openings[1].f_i_eval_at_point_i;
+        let batch_evals = &proof.batch_openings.f_i_eval_at_point_i;
         let mut pointer = 0;
-        let mut pointer_nv_one = 0;
 
         //// 1. ZeroCheck
         let witness_gate_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
@@ -643,11 +598,8 @@ where
         let witness_perm_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
 
         //// 3. Lookup Check
-        let lk_prod_evals = take_next_n(4, batch_evals_nv_one, &mut pointer_nv_one);
-        let lk_frac_evals = take_next_n(3, batch_evals_nv_one, &mut pointer_nv_one);
-        let lk_evals = take_next_n(3, batch_evals, &mut pointer);
-        let lk_evals_nv_one = take_next_n(2, batch_evals_nv_one, &mut pointer_nv_one);
-
+        let lk_ab_evals = take_next_n(2, batch_evals, &mut pointer);
+        let lk_zc_evals = take_next_n(5, batch_evals, &mut pointer);
         let lk_mle_eval = take_next_n(1, batch_evals, &mut pointer)[0];
         let lk_selector_evals = take_next_n(num_lk_selectors, batch_evals, &mut pointer);
         let lk_witness_evals = take_next_n(num_witnesses, batch_evals, &mut pointer);
@@ -758,73 +710,55 @@ where
         // =======================================================================
         let step = start_timer!(|| "verify permutation check");
 
-        let pc_aux_infor: VPAuxInfo<E::ScalarField> = VPAuxInfo {
-            max_degree: 2,
-            num_variables: num_vars + 1,
+        let sc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
+            max_degree: 1,
+            num_variables: num_vars,
             phantom: PhantomData::default(),
         };
-
-        let plookup_check_subclaim = <Self as PlookupCheck<E, PCS>>::verify(
+        let zc_aux_info: VPAuxInfo<E::ScalarField> = VPAuxInfo {
+            max_degree: 2,
+            num_variables: num_vars,
+            phantom: PhantomData::default(),
+        };
+        let lookup_check_subclaim = <Self as LookupCheck<E, PCS>>::verify(
             &proof.lookup_check_proof,
-            &pc_aux_infor,
+            &zc_aux_info,
+            &sc_aux_info,
             &mut transcript,
         )?;
-        let lk_prod_check_point = plookup_check_subclaim
-            .product_check_subclaim
-            .zero_check_sub_claim
-            .point;
 
-        // Verify ZeroCheck prod - p0 * p1 + alpha * (frac * (h + beta* hdelta + gamma) - (g1 + beta* g2+gamma)) =
-        // at prod_check_point
-        // prod(x) = v(1, x)
-
-        // p0(x) = v(x, 0) = (1-x1)*frac(x_hat,0) + x1*prod(x_hat,0)
-        // p1(x) = v(x, 1) = (1-x1)*frac(x_hat,1) + x1*prod(x_hat,1)
+        // Verify sumcheck for A - B
         {
-            let prod_eval = lk_prod_evals[0];
-            let prod_eval_0 = lk_prod_evals[1];
-            let prod_eval_1 = lk_prod_evals[2];
-            let frac_eval = lk_frac_evals[0];
-            let frac_eval_0 = lk_frac_evals[1];
-            let frac_eval_1 = lk_frac_evals[2];
-
-            let x1 = lk_prod_check_point[num_vars];
-
-            let p0 = (E::ScalarField::one() - x1) * frac_eval_0 + x1 * prod_eval_0;
-            let p1 = (E::ScalarField::one() - x1) * frac_eval_1 + x1 * prod_eval_1;
-
-            let alpha = plookup_check_subclaim.product_check_subclaim.alpha;
-            let (beta, gamma) = plookup_check_subclaim.challenges;
-
-            let f_lk_eval = lk_evals[0];
-            let t_eval = lk_evals[1];
-            let tdelta_eval = lk_evals[2];
-            let h_eval = lk_evals_nv_one[0];
-            let hdelta_eval = lk_evals[1];
-
-            let g1_eval = (E::ScalarField::one() - x1) * f_lk_eval + x1 * t_eval;
-            let g2_eval = (E::ScalarField::one() - x1) * f_lk_eval + x1 * tdelta_eval;
-
-            if prod_eval - p0 * p1
-                + alpha
-                    * (frac_eval * (h_eval + beta * hdelta_eval + gamma)
-                        - (g1_eval + beta * g2_eval + gamma))
-                != plookup_check_subclaim
-                    .product_check_subclaim
-                    .zero_check_sub_claim
-                    .expected_evaluation
-            {
+            let a_eval = lk_ab_evals[0];
+            let b_eval = lk_ab_evals[1];
+            if a_eval - b_eval != lookup_check_subclaim.sum_check_subclaim.expected_evaluation {
                 return Err(HyperPlonkErrors::InvalidProof(
-                    "In plookup check, zerocheck evaluation for prod and frac failed".to_string(),
+                    "In lookup check, sumcheck evaluation for A-B failed".to_string(),
                 ));
             }
         }
 
-        // verify prod(final_query_point) = 1
-        if lk_prod_evals[3] != plookup_check_subclaim.product_check_subclaim.final_query.1 {
-            return Err(HyperPlonkErrors::InvalidProof(
-                "In plookup check, final prod evaluation failed".to_string(),
-            ));
+        // Verify zero check for p(A, m, t, beta) + alpha*q(f, B, beta)
+        {
+            let a_eval = lk_zc_evals[0];
+            let b_eval = lk_zc_evals[1];
+            let f_eval = lk_zc_evals[2];
+            let m_eval = lk_zc_evals[3];
+            let t_eval = lk_zc_evals[4];
+
+            let beta = lookup_check_subclaim.challenges.0;
+            let alpha = lookup_check_subclaim.challenges.1;
+
+            if a_eval * (beta + t_eval) - m_eval
+                + alpha * ((beta + f_eval) * b_eval - E::ScalarField::one())
+                != lookup_check_subclaim
+                    .zero_check_subclaim
+                    .expected_evaluation
+            {
+                return Err(HyperPlonkErrors::InvalidProof(
+                    "In lookup check, zerocheck evaluation for p + alpha * q failed".to_string(),
+                ));
+            }
         }
 
         // Verify zerocheck for converting lookup VP to MLE
@@ -931,50 +865,21 @@ where
         }
 
         //// 6.3. Openings for lookup check + lookup ZC check
-        let mut comms_nv_one = vec![];
-        let mut points_nv_one = vec![];
 
-        let lk_prod_check_point_0 =
-            [&[E::ScalarField::one()], &lk_prod_check_point[..num_vars]].concat();
-        let lk_prod_check_point_1 =
-            [&[E::ScalarField::one()], &lk_prod_check_point[..num_vars]].concat();
-        comms_nv_one.append(&mut vec![
-            proof
-                .lookup_check_proof
-                .product_check_proof
-                .prod_x_comm;
-            4
-        ]);
-        points_nv_one.append(&mut vec![
-            lk_prod_check_point.clone(),
-            lk_prod_check_point_0.clone(),
-            lk_prod_check_point_1.clone(),
-            plookup_check_subclaim.product_check_subclaim.final_query.0,
-        ]);
-        comms_nv_one.append(&mut vec![
-            proof
-                .lookup_check_proof
-                .product_check_proof
-                .frac_comm;
-            3
-        ]);
-        points.append(&mut vec![
-            lk_prod_check_point.clone(),
-            lk_prod_check_point_0,
-            lk_prod_check_point_1,
-        ]);
-        let lk_prod_check_point_nv = lk_prod_check_point[..num_vars].to_vec();
-        comms.append(&mut vec![
-            proof.lookup_check_proof.f_comm,
-            vk.table_commitment,
-            vk.table_delta_commitment,
-        ]);
-        points.append(&mut vec![lk_prod_check_point_nv; 3]);
-        comms_nv_one.append(&mut vec![
-            proof.lookup_check_proof.h_comm,
-            proof.lookup_check_proof.h_delta_comm,
-        ]);
-        points_nv_one.append(&mut vec![lk_prod_check_point; 2]);
+        //-- A, B for sum check
+        let lookup_check_sc_point = lookup_check_subclaim.sum_check_subclaim.point;
+        comms.push(proof.lookup_check_proof.a_comm);
+        comms.push(proof.lookup_check_proof.b_comm);
+        points.append(&mut vec![lookup_check_sc_point; 2]);
+
+        //-- p(A,t,m) + alpha * q(B,f) for zero check
+        let lookup_check_zc_point = lookup_check_subclaim.zero_check_subclaim.point;
+        comms.push(proof.lookup_check_proof.a_comm); // for A
+        comms.push(proof.lookup_check_proof.b_comm); // for B
+        comms.push(proof.lookup_check_proof.f_comm); // for f
+        comms.push(proof.lookup_check_proof.m_comm); // for m
+        comms.push(vk.table_commitment); // for t
+        points.append(&mut vec![lookup_check_zc_point; 5]);
 
         //-- f_lk_mle, q_lk, w for lookup ZC check
         let lk_zc_point = lookup_zc_subclaim.point;
@@ -995,12 +900,7 @@ where
         comms.push(proof.witness_commits[0]);
         points.push(r_pi_padded);
 
-        assert_eq!(
-            comms.len() + comms_nv_one.len(),
-            proof.batch_openings[0].f_i_eval_at_point_i.len()
-                + proof.batch_openings[1].f_i_eval_at_point_i.len(),
-            "size of comms is not equal to size of points"
-        );
+        assert_eq!(comms.len(), proof.batch_openings.f_i_eval_at_point_i.len());
 
         end_timer!(step);
         let step = start_timer!(|| "PCS batch verify");
@@ -1009,21 +909,13 @@ where
             &vk.pcs_param,
             &comms,
             &points,
-            &proof.batch_openings[0],
-            &mut transcript,
-        )?;
-
-        let res_nv_one = PCS::batch_verify(
-            &vk.pcs_param,
-            &comms_nv_one,
-            &points_nv_one,
-            &proof.batch_openings[1],
+            &proof.batch_openings,
             &mut transcript,
         )?;
 
         end_timer!(step);
         end_timer!(start);
-        Ok(res && res_nv_one)
+        Ok(res)
     }
 }
 
@@ -1032,7 +924,7 @@ mod tests {
     use super::*;
     use crate::{
         custom_gate::CustomizedGates, selectors::SelectorColumn, structs::HyperPlonkParams,
-        witness::WitnessColumn, HyperPlonkSNARK,
+        witness::WitnessColumn,
     };
     use arithmetic::{identity_permutation, random_permutation};
     use ark_bls12_381::Bls12_381;
@@ -1070,12 +962,12 @@ mod tests {
         lk_gate_func: CustomizedGates,
     ) -> Result<(), HyperPlonkErrors> {
         let mut rng = test_rng();
+        let pcs_srs = MultilinearKzgPCS::<E>::gen_srs_for_testing(&mut rng, 2)?;
 
         let num_constraints = 4;
         let num_pub_input = 4;
         let nv = log2(num_constraints) as usize;
         let num_witnesses = 2;
-        let pcs_srs = MultilinearKzgPCS::<E>::gen_srs_for_testing(&mut rng, nv + 1)?;
 
         // generate index
         let params = HyperPlonkParams {
@@ -1089,7 +981,7 @@ mod tests {
             E::ScalarField::one(),
             E::ScalarField::one(),
             E::ScalarField::one(),
-            E::ScalarField::zero(),
+            E::ScalarField::one(),
         ]);
 
         let mut index = HyperPlonkIndex {
@@ -1097,7 +989,7 @@ mod tests {
             permutation,
             selectors: vec![q1.clone()],
             lk_selectors: vec![q1.clone(), q1],
-            table: [0, 2, 34]
+            table: [0, 2, 34, 246]
                 .iter()
                 .map(|i| E::ScalarField::from(*i as u128))
                 .collect(),
@@ -1105,7 +997,7 @@ mod tests {
 
         // generate pk and vks
         let (pk, vk) =
-            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::preprocess(
+            <PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::preprocess(
                 &index, &pcs_srs,
             )?;
 
@@ -1127,15 +1019,17 @@ mod tests {
         let pi = w1.clone();
 
         // generate a proof and verify
-        let proof = <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::prove(
-            &pk,
-            &pi.0,
-            &[w1.clone(), w2.clone()],
-        )?;
+        let proof =
+            <PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::prove(
+                &pk,
+                &pi.0,
+                &[w1.clone(), w2.clone()],
+            )?;
 
-        let verify = <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::verify(
-            &vk, &pi.0, &proof,
-        )?;
+        let verify =
+            <PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::verify(
+                &vk, &pi.0, &proof,
+            )?;
         assert!(verify, "Proof failed SNARK verify");
 
         // bad path 0: lookup not in table
@@ -1143,12 +1037,12 @@ mod tests {
         index.table = vec![E::ScalarField::one(); 4];
 
         let (pk0, _) =
-            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::preprocess(
+            <PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::preprocess(
                 &index, &pcs_srs,
             )?;
 
         assert!(
-            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::prove(
+            <PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::prove(
                 &pk0,
                 &pi.0,
                 &[w1.clone(), w2.clone()]
@@ -1164,11 +1058,11 @@ mod tests {
         let mut bad_index = index;
         bad_index.permutation = rand_perm;
         // generate pk and vks
-        let (_, bad_vk) =
-            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::preprocess(
-                &bad_index, &pcs_srs,
-            )?;
-        assert!(!<PolyIOP<E::ScalarField> as HyperPlonkSNARK<
+        let (_, bad_vk) = <PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<
+            E,
+            MultilinearKzgPCS<E>,
+        >>::preprocess(&bad_index, &pcs_srs)?;
+        assert!(!<PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<
             E,
             MultilinearKzgPCS<E>,
         >>::verify(&bad_vk, &pi.0, &proof,)?);
@@ -1177,7 +1071,7 @@ mod tests {
         let mut w1_bad = w1;
         w1_bad.0[0] = E::ScalarField::one();
         assert!(
-            <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::prove(
+            <PolyIOP<E::ScalarField> as LogaHyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::prove(
                 &pk,
                 &pi.0,
                 &[w1_bad, w2],

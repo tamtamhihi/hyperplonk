@@ -15,7 +15,7 @@ use std::sync::Arc;
 use subroutines::{
     pcs::PolynomialCommitmentScheme,
     poly_iop::prelude::{PermutationCheck, ZeroCheck},
-    LookupCheck,
+    LogaPreprocessedTable, LookupCheck, PlookupCheck, PlookupPreprocessedTable,
 };
 
 /// The proof for the HyperPlonk PolyIOP, consists of the following:
@@ -24,7 +24,7 @@ use subroutines::{
 ///   - the zero-check proof for checking custom gate-satisfiability
 ///   - the permutation-check proof for checking the copy constraints
 #[derive(Clone, Debug, PartialEq)]
-pub struct HyperPlonkProof<E, PC, LC, PCS>
+pub struct LogaHyperPlonkProof<E, PC, LC, PCS>
 where
     E: Pairing,
     PC: PermutationCheck<E, PCS>,
@@ -44,6 +44,29 @@ where
 
     pub lookup_check_proof: LC::LookupCheckProof,
     pub lookup_zc_proof: <LC as ZeroCheck<E::ScalarField>>::ZeroCheckProof,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HyperPlonkProof<E, PC, PLC, PCS>
+where
+    E: Pairing,
+    PC: PermutationCheck<E, PCS>,
+    PLC: PlookupCheck<E, PCS>,
+    PCS: PolynomialCommitmentScheme<E>,
+{
+    // PCS commit for witnesses
+    pub witness_commits: Vec<PCS::Commitment>,
+    pub batch_openings: Vec<PCS::BatchProof>,
+    // =======================================================================
+    // IOP proofs
+    // =======================================================================
+    // the custom gate zerocheck proof
+    pub zero_check_proof: <PC as ZeroCheck<E::ScalarField>>::ZeroCheckProof,
+    // the permutation check proof for copy constraints
+    pub perm_check_proof: PC::PermutationProof,
+
+    pub lookup_check_proof: PLC::PlookupCheckProof,
+    pub lookup_zc_proof: <PLC as ZeroCheck<E::ScalarField>>::ZeroCheckProof,
 }
 
 /// The HyperPlonk instance parameters, consists of the following:
@@ -145,7 +168,31 @@ impl<F: PrimeField> HyperPlonkIndex<F> {
 ///   - the preprocessed polynomials output by the indexer
 ///   - the commitment to the selectors and permutations
 ///   - the parameters for polynomial commitment
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
+pub struct LogaHyperPlonkProvingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> {
+    /// Hyperplonk instance parameters
+    pub params: HyperPlonkParams,
+
+    /// The preprocessed permutation polynomials
+    pub permutation_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
+    /// The preprocessed selector polynomials
+    pub selector_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
+    /// The preprocessed lookup selector polynomials
+    pub lk_selector_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
+    /// The preprocessed table
+    pub preprocessed_table: LogaPreprocessedTable<E, PCS>,
+
+    /// Commitments to the preprocessed permutation polynomials
+    pub permutation_commitments: Vec<PCS::Commitment>,
+    /// Commitments to the preprocessed selector polynomials
+    pub selector_commitments: Vec<PCS::Commitment>,
+    /// Commitments to the preprocessed lookup selector polynomials
+    pub lk_selector_commitments: Vec<PCS::Commitment>,
+
+    /// The parameters for PCS commitment
+    pub pcs_param: PCS::ProverParam,
+}
+#[derive(Clone, Debug, Default)]
 pub struct HyperPlonkProvingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> {
     /// Hyperplonk instance parameters
     pub params: HyperPlonkParams,
@@ -156,8 +203,8 @@ pub struct HyperPlonkProvingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> 
     pub selector_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
     /// The preprocessed lookup selector polynomials
     pub lk_selector_oracles: Vec<Arc<DenseMultilinearExtension<E::ScalarField>>>,
-    /// The preprocessed table polynomial
-    pub table_oracle: Arc<DenseMultilinearExtension<E::ScalarField>>,
+    /// The preprocessed table
+    pub preprocessed_table: PlookupPreprocessedTable<E, PCS>,
 
     /// Commitments to the preprocessed permutation polynomials
     pub permutation_commitments: Vec<PCS::Commitment>,
@@ -165,8 +212,6 @@ pub struct HyperPlonkProvingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> 
     pub selector_commitments: Vec<PCS::Commitment>,
     /// Commitments to the preprocessed lookup selector polynomials
     pub lk_selector_commitments: Vec<PCS::Commitment>,
-    /// Commitments to the preprocessed table polynomial
-    pub table_commitment: PCS::Commitment,
 
     /// The parameters for PCS commitment
     pub pcs_param: PCS::ProverParam,
@@ -176,6 +221,22 @@ pub struct HyperPlonkProvingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> 
 ///   - the hyperplonk instance parameters
 ///   - the commitments to the preprocessed polynomials output by the indexer
 ///   - the parameters for polynomial commitment
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LogaHyperPlonkVerifyingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> {
+    /// Hyperplonk instance parameters
+    pub params: HyperPlonkParams,
+    /// The parameters for PCS commitment
+    pub pcs_param: PCS::VerifierParam,
+    /// Permutation oracles' commitments
+    pub perm_commitments: Vec<PCS::Commitment>,
+    /// A commitment to the preprocessed selector polynomials
+    pub selector_commitments: Vec<PCS::Commitment>,
+    /// A commitment to the preprocessed lookup selector polynomials
+    pub lk_selector_commitments: Vec<PCS::Commitment>,
+    /// A commitment to the preprocessed table polynomial
+    pub table_commitment: PCS::Commitment,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HyperPlonkVerifyingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>> {
     /// Hyperplonk instance parameters
@@ -190,4 +251,6 @@ pub struct HyperPlonkVerifyingKey<E: Pairing, PCS: PolynomialCommitmentScheme<E>
     pub lk_selector_commitments: Vec<PCS::Commitment>,
     /// A commitment to the preprocessed table polynomial
     pub table_commitment: PCS::Commitment,
+    /// A commitment to the table_delta polynomial
+    pub table_delta_commitment: PCS::Commitment,
 }

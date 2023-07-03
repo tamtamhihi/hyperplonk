@@ -9,7 +9,7 @@ use transcript::IOPTranscript;
 
 mod util;
 use self::util::*;
-use super::structs::PreprocessedTable;
+use super::structs::LogaPreprocessedTable;
 
 pub trait LookupCheck<E, PCS>: ZeroCheck<E::ScalarField>
 where
@@ -22,15 +22,16 @@ where
     fn init_transcript() -> Self::Transcript;
 
     fn preprocess_table(
+        pcs_param: &PCS::ProverParam,
         nv: usize,
         t: &[E::ScalarField],
-    ) -> Result<PreprocessedTable<E::ScalarField, E::ScalarField>, PolyIOPErrors>;
+    ) -> Result<LogaPreprocessedTable<E, PCS>, PolyIOPErrors>;
 
     #[allow(clippy::type_complexity)]
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        preprocessed_table: &PreprocessedTable<E::ScalarField, E::ScalarField>,
+        preprocessed_table: &LogaPreprocessedTable<E, PCS>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
@@ -89,9 +90,10 @@ where
     }
 
     fn preprocess_table(
+        pcs_param: &PCS::ProverParam,
         nv: usize,
         table: &[E::ScalarField],
-    ) -> Result<PreprocessedTable<E::ScalarField, E::ScalarField>, PolyIOPErrors> {
+    ) -> Result<LogaPreprocessedTable<E, PCS>, PolyIOPErrors> {
         if table.len() != 1 << nv {
             return Err(PolyIOPErrors::InvalidParameters(
                 "table does not have sufficient elements".to_string(),
@@ -100,21 +102,23 @@ where
         let t = Arc::new(
             DenseMultilinearExtension::<E::ScalarField>::from_evaluations_slice(nv, table),
         );
+        let t_comm = PCS::commit(pcs_param, &t)?;
         let h_t = DashMap::<E::ScalarField, E::ScalarField>::new();
         for val in table.iter() {
             *h_t.entry(*val).or_insert_with(E::ScalarField::zero) += E::ScalarField::one();
         }
-        Ok(PreprocessedTable {
+        Ok(LogaPreprocessedTable {
             table: Vec::from(table),
             table_map: h_t,
             t,
+            t_comm,
         })
     }
 
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        preprocessed_table: &PreprocessedTable<E::ScalarField, E::ScalarField>,
+        preprocessed_table: &LogaPreprocessedTable<E, PCS>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
@@ -219,8 +223,8 @@ where
 mod test {
     use super::LookupCheck;
     use super::LookupCheckSubClaim;
+    use crate::poly_iop::lookup::structs::LogaPreprocessedTable;
     use crate::poly_iop::zero_check::ZeroCheckSubClaim;
-    use crate::PreprocessedTable;
     use crate::{
         pcs::{prelude::MultilinearKzgPCS, PolynomialCommitmentScheme},
         poly_iop::{errors::PolyIOPErrors, PolyIOP},
@@ -306,7 +310,7 @@ mod test {
 
     fn test_lookup_check_helper<E, PCS>(
         f: &Arc<DenseMultilinearExtension<E::ScalarField>>,
-        preprocessed_table: &PreprocessedTable<E::ScalarField, E::ScalarField>,
+        preprocessed_table: &LogaPreprocessedTable<E, PCS>,
         pcs_param: &PCS::ProverParam,
     ) -> Result<(), PolyIOPErrors>
     where
@@ -390,7 +394,11 @@ mod test {
     fn test_lookup_check(num_vars: usize) -> Result<(), PolyIOPErrors> {
         let mut rng = test_rng();
 
-        // 1) Generate the table, where the last half is padded.
+        // 1) Generate srs
+        let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, num_vars)?;
+        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(num_vars))?;
+
+        // 2) Generate the table, where the last half is padded.
         let half_n = 1 << (num_vars - 1);
         let half_table = DenseMultilinearExtension::<Fr>::rand(num_vars - 1, &mut rng);
 
@@ -400,9 +408,9 @@ mod test {
         let preprocessed_table = <PolyIOP<Fr> as LookupCheck<
             Bls12_381,
             MultilinearKzgPCS<Bls12_381>,
-        >>::preprocess_table(num_vars, &table)?;
+        >>::preprocess_table(&pcs_param, num_vars, &table)?;
 
-        // 2) Generate lookups
+        // 3) Generate lookups
         let lookups = (0..half_n)
             .map(|i| vec![table[i]; 2])
             .collect::<Vec<_>>()
@@ -410,10 +418,6 @@ mod test {
         let f = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_vec(
             num_vars, lookups,
         ));
-
-        // 3) Generate srs
-        let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, num_vars)?;
-        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(num_vars))?;
 
         // 4) Generate proof & verify proof
         test_lookup_check_helper::<Bls12_381, MultilinearKzgPCS<Bls12_381>>(

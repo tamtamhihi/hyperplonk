@@ -7,7 +7,7 @@ use transcript::IOPTranscript;
 
 pub mod utils;
 use self::utils::{compute_h, compute_poly_delta, embed};
-use super::structs::PreprocessedTable;
+use super::structs::PlookupPreprocessedTable;
 use dashmap::DashMap;
 
 pub trait PlookupCheck<E, PCS>: ProductCheck<E, PCS>
@@ -21,19 +21,22 @@ where
     fn init_transcript() -> Self::Transcript;
 
     fn preprocess_table(
+        pcs_param: &PCS::ProverParam,
         nv: usize,
         table: &[E::ScalarField],
-    ) -> Result<PreprocessedTable<E::ScalarField, usize>, PolyIOPErrors>;
+    ) -> Result<PlookupPreprocessedTable<E, PCS>, PolyIOPErrors>;
 
     #[allow(clippy::type_complexity)]
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        preprocessed_table: &PreprocessedTable<E::ScalarField, usize>,
+        preprocessed_table: &PlookupPreprocessedTable<E, PCS>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
             Self::PlookupCheckProof,
+            Self::MultilinearExtension,
+            Self::MultilinearExtension,
             Self::MultilinearExtension,
             Self::MultilinearExtension,
         ),
@@ -65,9 +68,8 @@ where
     PC: ProductCheck<E, PCS>,
 {
     pub product_check_proof: PC::ProductCheckProof,
+    pub f_comm: PCS::Commitment,
     pub h_comm: PCS::Commitment,
-    pub g1_comm: PCS::Commitment,
-    pub g2_comm: PCS::Commitment,
     pub h_delta_comm: PCS::Commitment,
 }
 
@@ -84,36 +86,47 @@ where
     }
 
     fn preprocess_table(
+        pcs_param: &PCS::ProverParam,
         nv: usize,
         table: &[E::ScalarField],
-    ) -> Result<PreprocessedTable<E::ScalarField, usize>, PolyIOPErrors> {
+    ) -> Result<PlookupPreprocessedTable<E, PCS>, PolyIOPErrors> {
         if table.len() != (1 << nv) - 1 {
             return Err(PolyIOPErrors::InvalidParameters(
-                "Table size is not in from of ".to_string(),
+                "Table size is not form of (1 << nv) - 1".to_string(),
             ));
         };
 
         let t = embed(table, nv)?;
+        let t_comm = PCS::commit(pcs_param, &t)?;
+
+        let t_delta = compute_poly_delta(&t, nv)?;
+        let t_delta_comm = PCS::commit(pcs_param, &t_delta)?;
 
         let h_t = DashMap::<E::ScalarField, usize>::new();
         for val in table.iter() {
             *h_t.entry(*val).or_insert_with(|| 0) += 1;
         }
-        Ok(PreprocessedTable {
+
+        Ok(PlookupPreprocessedTable {
             table: Vec::from(table),
             table_map: h_t,
             t,
+            t_comm,
+            t_delta,
+            t_delta_comm,
         })
     }
 
     fn prove(
         pcs_param: &PCS::ProverParam,
         f: &Self::MultilinearExtension,
-        preprocessed_table: &PreprocessedTable<E::ScalarField, usize>,
+        preprocessed_table: &PlookupPreprocessedTable<E, PCS>,
         transcript: &mut IOPTranscript<E::ScalarField>,
     ) -> Result<
         (
             Self::PlookupCheckProof,
+            Self::MultilinearExtension,
+            Self::MultilinearExtension,
             Self::MultilinearExtension,
             Self::MultilinearExtension,
         ),
@@ -121,29 +134,25 @@ where
     > {
         let num_vars = f.num_vars;
 
-        // h is vector
+        // h is a vector
         // num elements: 2^{mu + 1} - 1
-        let h = compute_h(f, &preprocessed_table.table)?;
+        let h = compute_h(f, &preprocessed_table.table, &preprocessed_table.table_map)?;
 
         // num vars: nv + 1
         let h_emb = embed(&h, num_vars + 1)?;
         let h_comm = PCS::commit(pcs_param, &h_emb)?;
         transcript.append_serializable_element(b"h_comm", &h_comm)?;
 
+        let f_comm = PCS::commit(pcs_param, f)?;
+        transcript.append_serializable_element(b"f_comm", &f_comm)?;
+
         // polynomial g1 = merge(f,t)
         // num vars: nv + 1
         let g1 = merge_polynomials(&[f.clone(), preprocessed_table.t.clone()])?;
-        let g1_comm = PCS::commit(pcs_param, &g1)?;
-        transcript.append_serializable_element(b"g1_comm", &g1_comm)?;
-
-        // num vars: nv
-        let t_delta = compute_poly_delta(&preprocessed_table.t, num_vars)?;
 
         // polynomial g2 = merge(f, t_delta)
         // num vars: nv + 1
-        let g2 = merge_polynomials(&[f.clone(), t_delta])?;
-        let g2_comm = PCS::commit(pcs_param, &g2)?;
-        transcript.append_serializable_element(b"g2_comm", &g2_comm)?;
+        let g2 = merge_polynomials(&[f.clone(), preprocessed_table.t_delta.clone()])?;
 
         // num vars: nv + 1
         let h_delta = compute_poly_delta(&h_emb, num_vars + 1)?;
@@ -193,13 +202,14 @@ where
         Ok((
             PlookupCheckProof {
                 product_check_proof: proof,
+                f_comm,
                 h_comm,
-                g1_comm,
-                g2_comm,
                 h_delta_comm,
             },
             prod_poly,
             frac_poly,
+            h_emb,
+            h_delta,
         ))
     }
 
@@ -210,8 +220,7 @@ where
     ) -> Result<Self::PlookupCheckSubClaim, PolyIOPErrors> {
         // update transcript and generate challenge
         transcript.append_serializable_element(b"h_comm", &proof.h_comm)?;
-        transcript.append_serializable_element(b"g1_comm", &proof.g1_comm)?;
-        transcript.append_serializable_element(b"g2_comm", &proof.g2_comm)?;
+        transcript.append_serializable_element(b"f_comm", &proof.f_comm)?;
         transcript.append_serializable_element(b"h_delta_comm", &proof.h_delta_comm)?;
 
         let beta = transcript.get_and_append_challenge(b"beta")?;
@@ -242,7 +251,8 @@ mod test {
     use ark_std::test_rng;
 
     use crate::{
-        MultilinearKzgPCS, PolyIOP, PolyIOPErrors, PolynomialCommitmentScheme, PreprocessedTable,
+        poly_iop::lookup::structs::PlookupPreprocessedTable, MultilinearKzgPCS, PolyIOP,
+        PolyIOPErrors, PolynomialCommitmentScheme,
     };
 
     use super::PlookupCheck;
@@ -250,7 +260,7 @@ mod test {
     fn test_plookup_check_helper<E, PCS>(
         pcs_param: &PCS::ProverParam,
         f: &Arc<DenseMultilinearExtension<E::ScalarField>>,
-        preprocessed_table: &PreprocessedTable<E::ScalarField, usize>,
+        preprocessed_table: &PlookupPreprocessedTable<E, PCS>,
     ) -> Result<(), PolyIOPErrors>
     where
         E: Pairing,
@@ -263,7 +273,7 @@ mod test {
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
         // 1) Generate proof
-        let (proof, prod_poly, _frac_poly) =
+        let (proof, prod_poly, _, _, _) =
             <PolyIOP<E::ScalarField> as PlookupCheck<E, PCS>>::prove(
                 pcs_param,
                 f,
@@ -304,13 +314,17 @@ mod test {
     fn test_plookup_check(nv: usize) -> Result<(), PolyIOPErrors> {
         let mut rng = test_rng();
 
+        // generate srs
+        let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, nv + 1)?;
+        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(nv + 1))?;
+
         // generate the table, whose each element is distinct
         let table = (1..(1 << nv)).map(Fr::from).collect::<Vec<_>>();
 
         let preprocessed_table = <PolyIOP<Fr> as PlookupCheck<
             Bls12_381,
             MultilinearKzgPCS<Bls12_381>,
-        >>::preprocess_table(nv, &table)?;
+        >>::preprocess_table(&pcs_param, nv, &table)?;
 
         // generate lookups
         let half_nv = 1 << (nv - 1);
@@ -322,10 +336,6 @@ mod test {
         let f = Arc::new(DenseMultilinearExtension::<Fr>::from_evaluations_vec(
             nv, lookups,
         ));
-
-        // generate srs
-        let srs = MultilinearKzgPCS::<Bls12_381>::gen_srs_for_testing(&mut rng, nv + 1)?;
-        let (pcs_param, _) = MultilinearKzgPCS::<Bls12_381>::trim(srs, None, Some(nv + 1))?;
 
         // generate proof & verify proof
         test_plookup_check_helper::<Bls12_381, MultilinearKzgPCS<Bls12_381>>(

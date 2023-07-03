@@ -13,6 +13,7 @@ use witness::WitnessColumn;
 
 mod custom_gate;
 mod errors;
+mod logasnark;
 mod mock;
 pub mod prelude;
 mod selectors;
@@ -23,6 +24,60 @@ mod witness;
 
 /// A trait for HyperPlonk SNARKs.
 /// A HyperPlonk is derived from ZeroChecks and PermutationChecks.
+pub trait LogaHyperPlonkSNARK<E, PCS>: PermutationCheck<E, PCS>
+where
+    E: Pairing,
+    PCS: PolynomialCommitmentScheme<E>,
+{
+    type Index;
+    type ProvingKey;
+    type VerifyingKey;
+    type Proof;
+
+    /// Generate the preprocessed polynomials output by the indexer.
+    ///
+    /// Inputs:
+    /// - `index`: HyperPlonk index
+    /// - `pcs_srs`: Polynomial commitment structured reference string
+    /// Outputs:
+    /// - The HyperPlonk proving key, which includes the preprocessed
+    ///   polynomials.
+    /// - The HyperPlonk verifying key, which includes the preprocessed
+    ///   polynomial commitments
+    fn preprocess(
+        index: &Self::Index,
+        pcs_srs: &PCS::SRS,
+    ) -> Result<(Self::ProvingKey, Self::VerifyingKey), HyperPlonkErrors>;
+
+    /// Generate HyperPlonk SNARK proof.
+    ///
+    /// Inputs:
+    /// - `pk`: circuit proving key
+    /// - `pub_input`: online public input
+    /// - `witness`: witness assignment
+    /// Outputs:
+    /// - The HyperPlonk SNARK proof.
+    fn prove(
+        pk: &Self::ProvingKey,
+        pub_input: &[E::ScalarField],
+        witnesses: &[WitnessColumn<E::ScalarField>],
+    ) -> Result<Self::Proof, HyperPlonkErrors>;
+
+    /// Verify the HyperPlonk proof.
+    ///
+    /// Inputs:
+    /// - `vk`: verifying key
+    /// - `pub_input`: online public input
+    /// - `proof`: HyperPlonk SNARK proof challenges
+    /// Outputs:
+    /// - Return a boolean on whether the verification is successful
+    fn verify(
+        vk: &Self::VerifyingKey,
+        pub_input: &[E::ScalarField],
+        proof: &Self::Proof,
+    ) -> Result<bool, HyperPlonkErrors>;
+}
+
 pub trait HyperPlonkSNARK<E, PCS>: PermutationCheck<E, PCS>
 where
     E: Pairing,

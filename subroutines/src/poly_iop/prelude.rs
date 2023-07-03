@@ -8,7 +8,7 @@ pub use crate::poly_iop::{
     errors::PolyIOPErrors,
     lookup::{
         lookup_check::LookupCheck, plookup_check::utils::embed, plookup_check::PlookupCheck,
-        structs::PreprocessedTable,
+        structs::*,
     },
     perm_check::PermutationCheck,
     prod_check::ProductCheck,

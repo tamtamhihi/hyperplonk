@@ -1,17 +1,16 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-
 use arithmetic::bit_decompose;
 use ark_ff::PrimeField;
 use ark_poly::DenseMultilinearExtension;
+use dashmap::{DashMap, DashSet};
+use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use std::sync::Arc;
 
 use crate::poly_iop::errors::PolyIOPErrors;
 
 pub(super) fn compute_h<F: PrimeField>(
     f: &Arc<DenseMultilinearExtension<F>>,
     t: &[F],
+    h_t: &DashMap<F, usize>,
 ) -> Result<Vec<F>, PolyIOPErrors> {
     let nv = f.num_vars;
     assert!(
@@ -19,30 +18,31 @@ pub(super) fn compute_h<F: PrimeField>(
         "lookup size and table size are incorrect"
     );
 
-    let mut h_f = HashMap::new();
-    let mut h_t = HashMap::new();
+    let h_f = DashMap::new();
 
-    for num in t.iter() {
-        *h_t.entry(*num).or_insert_with(|| 0) += 1;
-    }
-    for num in f.iter() {
-        if h_t.get(num).is_none() {
-            return Err(PolyIOPErrors::InvalidProof(format!(
-                "Lookup value {num} is not in table"
-            )));
-        }
-        *h_f.entry(*num).or_insert_with(|| 0) += 1;
-    }
+    f.evaluations
+        .par_iter()
+        .map(|num| -> Result<(), PolyIOPErrors> {
+            if h_t.get(num).is_none() {
+                return Err(PolyIOPErrors::InvalidProof(format!(
+                    "Lookup value {num} is not in table"
+                )));
+            }
+            *h_f.entry(*num).or_insert_with(|| 0) += 1;
+            Ok(())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let mut evaluations: Vec<F> = vec![];
-    let mut table_set = HashSet::new();
+    let table_set = DashSet::new();
     for num in t.iter() {
         if !table_set.contains(num) {
-            evaluations.append(&mut vec![
-                *num;
-                *h_t.get(num).unwrap_or(&0)
-                    + *h_f.get(num).unwrap_or(&0)
-            ]);
-
+            let h_t_val: usize = *h_t.get(num).unwrap();
+            if let Some(h_f_val) = h_f.get(num) {
+                evaluations.append(&mut vec![*num; h_t_val + *h_f_val]);
+            } else {
+                evaluations.append(&mut vec![*num; h_t_val]);
+            }
             table_set.insert(*num);
         }
     }
@@ -57,30 +57,23 @@ pub(super) fn get_primitive_polynomial(n: usize) -> Result<Vec<usize>, PolyIOPEr
         ));
     }
     let primitive_polynomial: Vec<Vec<usize>> = vec![
-        vec![1, 1, 1],                                              //2
-        vec![1, 0, 1, 1],                                           //3
-        vec![1, 0, 0, 1, 1],                                        //4
-        vec![1, 0, 0, 1, 0, 1],                                     //5
-        vec![1, 0, 0, 0, 0, 1, 1],                                  //6
-        vec![1, 0, 0, 0, 0, 0, 1, 1],                               //7
-        vec![1, 0, 0, 0, 1, 1, 1, 0, 1],                            //8
-        vec![1, 0, 0, 0, 0, 1, 0, 0, 0, 1],                         //9
-        vec![1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],                      //10
-        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],                   //11
-        vec![1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1],                //12
-        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1],             //13
-        vec![1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1],          //14
-        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],       //15
-        vec![1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1],    //16
-        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1], //17
+        vec![1, 1, 1],                                                 //2
+        vec![1, 0, 1, 1],                                              //3
+        vec![1, 0, 0, 1, 1],                                           //4
+        vec![1, 0, 0, 1, 0, 1],                                        //5
+        vec![1, 0, 0, 0, 0, 1, 1],                                     //6
+        vec![1, 0, 0, 0, 0, 0, 1, 1],                                  //7
+        vec![1, 0, 0, 0, 1, 1, 1, 0, 1],                               //8
+        vec![1, 0, 0, 0, 0, 1, 0, 0, 0, 1],                            //9
+        vec![1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],                         //10
+        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],                      //11
+        vec![1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1],                   //12
+        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1],                //13
+        vec![1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1],             //14
+        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],          //15
+        vec![1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1],       //16
+        vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],    //17
         vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1], //18
-                                                                    // vec![1,0,0,0],
-                                                                    // vec![],
-                                                                    // vec![],
-                                                                    // vec![],
-                                                                    // vec![],
-                                                                    // vec![],
-                                                                    // vec![],
     ];
     Ok(primitive_polynomial[n - 2].clone())
 }
@@ -93,7 +86,7 @@ pub(super) fn next_element(
     s: &[usize], // primitive polynomial
 ) -> usize {
     let bit_sequence = bit_decompose(cur_num as u64, nv);
-    let s_bool = s[1..nv].iter().map(|x| *x == 1).collect::<Vec<bool>>();
+    let s_bool = s[1..nv].par_iter().map(|x| *x == 1).collect::<Vec<bool>>();
 
     let sign = bit_sequence[0];
     let next_num = project(
@@ -108,8 +101,8 @@ pub(super) fn next_element(
 }
 
 pub(super) fn transform(a: &[bool], s: &[bool], sign: bool) -> Vec<bool> {
-    a.iter()
-        .zip(s.iter())
+    a.par_iter()
+        .zip(s.par_iter())
         .map(|(&a_val, &s_val)| if s_val { a_val ^ sign } else { a_val })
         .collect::<Vec<bool>>()
 }
@@ -252,6 +245,10 @@ mod test {
 
         // generate the table, whose each element is distinct
         let table = (1..(1 << nv)).map(Fr::from).collect::<Vec<_>>();
+        let h_t = DashMap::new();
+        for num in table.iter() {
+            *h_t.entry(*num).or_insert_with(|| 0) += 1;
+        }
 
         let half_nv = 1 << (nv - 1);
         let lookups = (0..half_nv)
@@ -264,7 +261,7 @@ mod test {
             lookups.clone(),
         ));
 
-        let h = compute_h(&f, &table)?;
+        let h = compute_h(&f, &table, &h_t)?;
         if h.len() != lookups.len() + table.len() {
             return Err(PolyIOPErrors::InvalidParameters(
                 "wrong computing h: Incorrect result vector size".to_string(),

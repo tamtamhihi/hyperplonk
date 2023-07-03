@@ -11,7 +11,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Write};
 use ark_std::test_rng;
 use hyperplonk::{
     prelude::{CustomizedGates, HyperPlonkErrors, MockCircuit},
-    HyperPlonkSNARK,
+    LogaHyperPlonkSNARK,
 };
 use subroutines::{
     pcs::{
@@ -130,13 +130,13 @@ fn bench_mock_circuit_zkp_helper(
     // generate pk and vks
     let start = Instant::now();
     for _ in 0..(repetition - 1) {
-        let (_pk, _vk) = <PolyIOP<Fr> as HyperPlonkSNARK<
+        let (_pk, _vk) = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
             Bls12_381,
             MultilinearKzgPCS<Bls12_381>,
         >>::preprocess(&index, pcs_srs)?;
     }
     let (pk, vk) =
-        <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::preprocess(
+        <PolyIOP<Fr> as LogaHyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::preprocess(
             &index, pcs_srs,
         )?;
     println!(
@@ -148,12 +148,10 @@ fn bench_mock_circuit_zkp_helper(
     // generate a proof
     let start = Instant::now();
     for _ in 0..repetition {
-        let _proof =
-            <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::prove(
-                &pk,
-                &circuit.public_inputs,
-                &circuit.witnesses,
-            )?;
+        let _proof = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
+            Bls12_381,
+            MultilinearKzgPCS<Bls12_381>,
+        >>::prove(&pk, &circuit.public_inputs, &circuit.witnesses)?;
     }
     let t = start.elapsed().as_micros() / repetition as u128;
     println!(
@@ -163,21 +161,20 @@ fn bench_mock_circuit_zkp_helper(
     );
     file.write_all(format!("{} {}\n", nv, t).as_ref()).unwrap();
 
-    let proof = <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::prove(
-        &pk,
-        &circuit.public_inputs,
-        &circuit.witnesses,
-    )?;
+    let proof =
+        <PolyIOP<Fr> as LogaHyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::prove(
+            &pk,
+            &circuit.public_inputs,
+            &circuit.witnesses,
+        )?;
     //==========================================================
     // verify a proof
     let start = Instant::now();
     for _ in 0..repetition {
-        let verify =
-            <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::verify(
-                &vk,
-                &circuit.public_inputs,
-                &proof,
-            )?;
+        let verify = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
+            Bls12_381,
+            MultilinearKzgPCS<Bls12_381>,
+        >>::verify(&vk, &circuit.public_inputs, &proof)?;
         assert!(verify);
     }
     println!(

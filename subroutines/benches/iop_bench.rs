@@ -303,7 +303,7 @@ fn bench_lookup_check() -> Result<(), PolyIOPErrors> {
         let mut table = half_table.evaluations;
         table.append(&mut vec![table[half_n - 1]; half_n]);
         let preprocessed_table =
-            <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::preprocess_table(nv, &table)?;
+            <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::preprocess_table(&pcs_param, nv, &table)?;
 
         let lookups = (0..half_n)
             .map(|i| vec![table[i]; 2])
@@ -400,8 +400,9 @@ fn bench_plookup_check() -> Result<(), PolyIOPErrors> {
         let half_table = DenseMultilinearExtension::<Fr>::rand(nv - 1, &mut rng);
         let mut table = half_table.evaluations;
         table.append(&mut vec![table[half_n - 1]; half_n - 1]);
-        let preprocessed_table =
-            <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::preprocess_table(nv, &table)?;
+        let preprocessed_table = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::preprocess_table(
+            &pcs_param, nv, &table,
+        )?;
 
         let lookups = (0..half_n)
             .map(|i| vec![table[i]; 2])
@@ -419,7 +420,7 @@ fn bench_plookup_check() -> Result<(), PolyIOPErrors> {
                     <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::init_transcript();
                 transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
-                let (_, _, _) = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::prove(
+                let (_, _, _, _, _, _) = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::prove(
                     &pcs_param,
                     &f,
                     &preprocessed_table,
@@ -433,7 +434,7 @@ fn bench_plookup_check() -> Result<(), PolyIOPErrors> {
             );
             let mut transcript = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::init_transcript();
             transcript.append_message(b"testing", b"initializing transcript for testing")?;
-            let (proof, _, _) = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::prove(
+            let (proof, _, _, _, _) = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::prove(
                 &pcs_param,
                 &f,
                 &preprocessed_table,

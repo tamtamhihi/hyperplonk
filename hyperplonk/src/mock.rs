@@ -222,7 +222,7 @@ impl<F: PrimeField> MockCircuit<F> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{errors::HyperPlonkErrors, HyperPlonkSNARK};
+    use crate::{errors::HyperPlonkErrors, LogaHyperPlonkSNARK};
     use ark_bls12_381::{Bls12_381, Fr};
     use subroutines::{
         pcs::{
@@ -306,24 +306,20 @@ mod test {
 
         let index = circuit.index;
         // generate pk and vks
-        let (pk, vk) =
-            <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::preprocess(
-                &index, pcs_srs,
-            )?;
+        let (pk, vk) = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
+            Bls12_381,
+            MultilinearKzgPCS<Bls12_381>,
+        >>::preprocess(&index, pcs_srs)?;
         // generate a proof and verify
-        let proof =
-            <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::prove(
-                &pk,
-                &circuit.public_inputs,
-                &circuit.witnesses,
-            )?;
+        let proof = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
+            Bls12_381,
+            MultilinearKzgPCS<Bls12_381>,
+        >>::prove(&pk, &circuit.public_inputs, &circuit.witnesses)?;
 
-        let verify =
-            <PolyIOP<Fr> as HyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::verify(
-                &vk,
-                &circuit.public_inputs,
-                &proof,
-            )?;
+        let verify = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
+            Bls12_381,
+            MultilinearKzgPCS<Bls12_381>,
+        >>::verify(&vk, &circuit.public_inputs, &proof)?;
         assert!(verify);
         Ok(())
     }

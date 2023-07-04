@@ -55,6 +55,7 @@ impl<F: PrimeField> MockCircuit<F> {
         num_constraints: usize,
         gate: &CustomizedGates,
         lk_gate: &CustomizedGates,
+        full_table: bool,
     ) -> MockCircuit<F> {
         let mut rng = test_rng();
         let nv = log2(num_constraints);
@@ -68,7 +69,14 @@ impl<F: PrimeField> MockCircuit<F> {
         let mut lk_selectors: Vec<SelectorColumn<F>> =
             vec![SelectorColumn::default(); num_lk_selectors];
         let mut witnesses: Vec<WitnessColumn<F>> = vec![WitnessColumn::default(); num_witnesses];
-        let mut table = vec![F::default(); num_constraints];
+
+        let mut table ;
+        if full_table {
+            table = vec![F::default(); num_constraints]
+        } 
+        else {
+            table = vec![F::default(); num_constraints - 1]
+        };
 
         for current_row in 0..num_constraints {
             // 1) Generate witness for this row.
@@ -116,26 +124,65 @@ impl<F: PrimeField> MockCircuit<F> {
             }
 
             // 3) Generate lookup selectors, evaluate the row and push to table.
-            let cur_lk_selectors: Vec<F> =
-                (0..(num_lk_selectors)).map(|_| F::rand(&mut rng)).collect();
+            
 
             let mut lookup_value = F::zero();
-            for (coeff, q_lk, wit) in lk_gate.gates.iter() {
-                let mut cur_lk_monomial = if *coeff < 0 {
-                    -F::from((-coeff) as u64)
-                } else {
-                    F::from(*coeff as u64)
-                };
-                cur_lk_monomial = match q_lk {
-                    Some(p) => cur_lk_monomial * cur_lk_selectors[*p],
-                    None => cur_lk_monomial,
-                };
-                for wit_index in wit.iter() {
-                    cur_lk_monomial *= cur_witness[*wit_index];
+            let mut cur_lk_selectors: Vec<F>;
+            if current_row != num_constraints - 1 {
+                cur_lk_selectors =
+                    (0..(num_lk_selectors)).map(|_| F::rand(&mut rng)).collect();
+
+                for (coeff, q_lk, wit) in lk_gate.gates.iter() {
+                    let mut cur_lk_monomial = if *coeff < 0 {
+                        -F::from((-coeff) as u64)
+                    } else {
+                        F::from(*coeff as u64)
+                    };
+                    cur_lk_monomial = match q_lk {
+                        Some(p) => cur_lk_monomial * cur_lk_selectors[*p],
+                        None => cur_lk_monomial,
+                    };
+                    for wit_index in wit.iter() {
+                        cur_lk_monomial *= cur_witness[*wit_index];
+                    }
+                    lookup_value += cur_lk_monomial;
                 }
-                lookup_value += cur_lk_monomial;
+                table[current_row] = lookup_value;
+            } else {
+                cur_lk_selectors =
+                    (0..(num_lk_selectors - 1)).map(|_| F::rand(&mut rng)).collect();
+                let mut last_lk_selector = F::zero();
+                for (index, (coeff, q_lk, wit)) in lk_gate.gates.iter().enumerate() {
+                    if index != num_lk_selectors - 1 {
+                        let mut cur_lk_monomial = if *coeff < 0 {
+                            -F::from((-coeff) as u64)
+                        } else {
+                            F::from(*coeff as u64)
+                        };
+                        cur_lk_monomial = match q_lk {
+                            Some(p) => cur_lk_monomial * cur_lk_selectors[*p],
+                            None => cur_lk_monomial,
+                        };
+                        for wit_index in wit.iter() {
+                            cur_lk_monomial *= cur_witness[*wit_index];
+                        }
+                        last_lk_selector += cur_lk_monomial;
+                    } else {
+                        let mut cur_lk_monomial = if *coeff < 0 {
+                            -F::from((-coeff) as u64)
+                        } else {
+                            F::from(*coeff as u64)
+                        };
+                        for wit_index in wit.iter() {
+                            cur_lk_monomial *= cur_witness[*wit_index];
+                        }
+
+                        // acc_last_selector + x * cur_lk_monomial = table[current - 1]
+                        last_lk_selector = (table[current_row - 1] - last_lk_selector) / cur_lk_monomial;
+                    }
+                }
+                cur_lk_selectors.push(last_lk_selector);
             }
-            table[current_row] = lookup_value;
 
             for i in 0..num_lk_selectors {
                 lk_selectors[i].append(cur_lk_selectors[i]);
@@ -279,17 +326,19 @@ mod test {
     fn test_mock_circuit_sat() {
         for i in 1..10 {
             let vanilla_gate = CustomizedGates::vanilla_plonk_gate();
-            let circuit = MockCircuit::<Fr>::new(1 << i, &vanilla_gate, &vanilla_gate);
+            let circuit = MockCircuit::<Fr>::new(1 << i, &vanilla_gate, &vanilla_gate, true);
             assert!(circuit.is_satisfied());
 
             let jf_gate = CustomizedGates::jellyfish_turbo_plonk_gate();
-            let circuit = MockCircuit::<Fr>::new(1 << i, &jf_gate, &jf_gate);
+            let circuit = MockCircuit::<Fr>::new(1 << i, &jf_gate, &jf_gate, true);
             assert!(circuit.is_satisfied());
 
             for num_witness in 2..10 {
                 for degree in CUSTOM_DEGREE {
                     let mock_gate = CustomizedGates::mock_gate(num_witness, degree);
-                    let circuit = MockCircuit::<Fr>::new(1 << i, &mock_gate, &mock_gate);
+                    let circuit = MockCircuit::<Fr>::new(1 << i, &mock_gate, &mock_gate, true);
+                    assert!(circuit.is_satisfied());
+                    let circuit = MockCircuit::<Fr>::new(1 << i, &mock_gate, &mock_gate, false);
                     assert!(circuit.is_satisfied());
                 }
             }
@@ -301,7 +350,7 @@ mod test {
         gate: &CustomizedGates,
         pcs_srs: &MultilinearUniversalParams<Bls12_381>,
     ) -> Result<(), HyperPlonkErrors> {
-        let circuit = MockCircuit::<Fr>::new(1 << nv, gate, gate);
+        let circuit = MockCircuit::<Fr>::new(1 << nv, gate, gate, true);
         assert!(circuit.is_satisfied());
 
         let index = circuit.index;

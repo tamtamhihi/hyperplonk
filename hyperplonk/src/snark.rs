@@ -800,7 +800,7 @@ where
             let t_eval = lk_evals[1];
             let tdelta_eval = lk_evals[2];
             let h_eval = lk_evals_nv_one[0];
-            let hdelta_eval = lk_evals[1];
+            let hdelta_eval = lk_evals_nv_one[1];
 
             let g1_eval = (E::ScalarField::one() - x1) * f_lk_eval + x1 * t_eval;
             let g2_eval = (E::ScalarField::one() - x1) * f_lk_eval + x1 * tdelta_eval;
@@ -935,7 +935,7 @@ where
         let mut points_nv_one = vec![];
 
         let lk_prod_check_point_0 =
-            [&[E::ScalarField::one()], &lk_prod_check_point[..num_vars]].concat();
+            [&[E::ScalarField::zero()], &lk_prod_check_point[..num_vars]].concat();
         let lk_prod_check_point_1 =
             [&[E::ScalarField::one()], &lk_prod_check_point[..num_vars]].concat();
         comms_nv_one.append(&mut vec![
@@ -958,7 +958,7 @@ where
                 .frac_comm;
             3
         ]);
-        points.append(&mut vec![
+        points_nv_one.append(&mut vec![
             lk_prod_check_point.clone(),
             lk_prod_check_point_0,
             lk_prod_check_point_1,
@@ -1089,6 +1089,12 @@ mod tests {
             E::ScalarField::one(),
             E::ScalarField::one(),
             E::ScalarField::one(),
+            E::ScalarField::one(),
+        ]);
+        let qlk = SelectorColumn(vec![
+            E::ScalarField::one(),
+            E::ScalarField::one(),
+            E::ScalarField::one(),
             E::ScalarField::zero(),
         ]);
 
@@ -1096,7 +1102,7 @@ mod tests {
             params,
             permutation,
             selectors: vec![q1.clone()],
-            lk_selectors: vec![q1.clone(), q1],
+            lk_selectors: vec![qlk.clone(), qlk],
             table: [0, 2, 34]
                 .iter()
                 .map(|i| E::ScalarField::from(*i as u128))
@@ -1140,7 +1146,7 @@ mod tests {
 
         // bad path 0: lookup not in table
         let correct_table = index.table;
-        index.table = vec![E::ScalarField::one(); 4];
+        index.table = vec![E::ScalarField::one(); 3];
 
         let (pk0, _) =
             <PolyIOP<E::ScalarField> as HyperPlonkSNARK<E, MultilinearKzgPCS<E>>>::preprocess(

@@ -91,9 +91,11 @@ where
         table: &[E::ScalarField],
     ) -> Result<PlookupPreprocessedTable<E, PCS>, PolyIOPErrors> {
         if table.len() != (1 << nv) - 1 {
-            return Err(PolyIOPErrors::InvalidParameters(
-                "Table size is not form of (1 << nv) - 1".to_string(),
-            ));
+            return Err(PolyIOPErrors::InvalidParameters(format!(
+                "Table size has {} elements, expected 1<<nv - 1 = {} elements",
+                table.len(),
+                (1 << nv) - 1
+            )));
         };
 
         let t = embed(table, nv)?;
@@ -273,13 +275,12 @@ mod test {
         transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
         // 1) Generate proof
-        let (proof, prod_poly, _, _, _) =
-            <PolyIOP<E::ScalarField> as PlookupCheck<E, PCS>>::prove(
-                pcs_param,
-                f,
-                preprocessed_table,
-                &mut transcript,
-            )?;
+        let (proof, prod_poly, _, _, _) = <PolyIOP<E::ScalarField> as PlookupCheck<E, PCS>>::prove(
+            pcs_param,
+            f,
+            preprocessed_table,
+            &mut transcript,
+        )?;
 
         // 2) Verify the proof
         let mut transcript = <PolyIOP<E::ScalarField> as PlookupCheck<E, PCS>>::init_transcript();

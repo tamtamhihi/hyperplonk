@@ -420,7 +420,7 @@ fn bench_plookup_check() -> Result<(), PolyIOPErrors> {
                     <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::init_transcript();
                 transcript.append_message(b"testing", b"initializing transcript for testing")?;
 
-                let (_, _, _, _, _, _) = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::prove(
+                let (_, _, _, _, _) = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::prove(
                     &pcs_param,
                     &f,
                     &preprocessed_table,

@@ -122,10 +122,13 @@ fn bench_mock_circuit_zkp_helper(
         1
     };
 
+    // LOGACIRCUIT AND LOGA SNARK
     //==========================================================
-    let circuit = MockCircuit::<Fr>::new(1 << nv, gate, gate);
-    assert!(circuit.is_satisfied());
-    let index = circuit.index;
+    let logacircuit = MockCircuit::<Fr>::new(1 << nv, gate, gate, true);
+    let pcircuit = MockCircuit::<Fr>::new(1 << nv, gate, gate, true);
+    assert!(logacircuit.is_satisfied());
+    assert!(pcircuit.is_satisfied());
+    let index = logacircuit.index;
     //==========================================================
     // generate pk and vks
     let start = Instant::now();
@@ -151,7 +154,7 @@ fn bench_mock_circuit_zkp_helper(
         let _proof = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
             Bls12_381,
             MultilinearKzgPCS<Bls12_381>,
-        >>::prove(&pk, &circuit.public_inputs, &circuit.witnesses)?;
+        >>::prove(&pk, &logacircuit.public_inputs, &logacircuit.witnesses)?;
     }
     let t = start.elapsed().as_micros() / repetition as u128;
     println!(
@@ -164,8 +167,8 @@ fn bench_mock_circuit_zkp_helper(
     let proof =
         <PolyIOP<Fr> as LogaHyperPlonkSNARK<Bls12_381, MultilinearKzgPCS<Bls12_381>>>::prove(
             &pk,
-            &circuit.public_inputs,
-            &circuit.witnesses,
+            &logacircuit.public_inputs,
+            &logacircuit.witnesses,
         )?;
     //==========================================================
     // verify a proof
@@ -174,7 +177,7 @@ fn bench_mock_circuit_zkp_helper(
         let verify = <PolyIOP<Fr> as LogaHyperPlonkSNARK<
             Bls12_381,
             MultilinearKzgPCS<Bls12_381>,
-        >>::verify(&vk, &circuit.public_inputs, &proof)?;
+        >>::verify(&vk, &logacircuit.public_inputs, &proof)?;
         assert!(verify);
     }
     println!(

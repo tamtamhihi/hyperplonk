@@ -1101,7 +1101,7 @@ mod tests {
         let mut index = HyperPlonkIndex {
             params,
             permutation,
-            selectors: vec![q1.clone()],
+            selectors: vec![q1],
             lk_selectors: vec![qlk.clone(), qlk],
             table: [0, 2, 34]
                 .iter()

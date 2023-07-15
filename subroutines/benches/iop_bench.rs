@@ -7,8 +7,9 @@
 use arithmetic::{identity_permutation_mles, VPAuxInfo, VirtualPolynomial};
 use ark_bls12_381::{Bls12_381, Fr};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
+use ark_serialize::Write;
 use ark_std::test_rng;
-use std::{marker::PhantomData, sync::Arc, time::Instant};
+use std::{fs::File, marker::PhantomData, sync::Arc, time::Instant};
 use subroutines::{
     pcs::{prelude::MultilinearKzgPCS, PolynomialCommitmentScheme},
     poly_iop::prelude::{
@@ -285,15 +286,17 @@ fn bench_prod_check() -> Result<(), PolyIOPErrors> {
 
 fn bench_lookup_check() -> Result<(), PolyIOPErrors> {
     let mut rng = test_rng();
+    let thread = rayon::current_num_threads();
+    let mut file = File::create(format!("logalk {thread} threads.txt")).unwrap();
 
-    for nv in 4..20 {
+    for nv in 4..16 {
         let srs = Kzg::gen_srs_for_testing(&mut rng, nv + 1)?;
         let (pcs_param, _) = Kzg::trim(&srs, None, Some(nv + 1))?;
 
         let repetition = if nv < 10 {
-            5
+            10
         } else if nv < 20 {
-            2
+            5
         } else {
             1
         };
@@ -328,11 +331,13 @@ fn bench_lookup_check() -> Result<(), PolyIOPErrors> {
                     &mut transcript,
                 )?;
             }
+            let proving = start.elapsed().as_nanos() / repetition as u128;
             println!(
                 "lookup check proving time for {} variables: {} ns",
-                nv,
-                start.elapsed().as_nanos() / repetition as u128
+                nv, proving
             );
+            file.write_all(format!("{} {}\n", nv, proving).as_ref())
+                .unwrap();
             let mut transcript = <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::init_transcript();
             transcript.append_message(b"testing", b"initializing transcript for testing")?;
             let (proof, _, _, _) = <PolyIOP<Fr> as LookupCheck<Bls12_381, Kzg>>::prove(
@@ -383,8 +388,10 @@ fn bench_lookup_check() -> Result<(), PolyIOPErrors> {
 
 fn bench_plookup_check() -> Result<(), PolyIOPErrors> {
     let mut rng = test_rng();
+    let thread = rayon::current_num_threads();
+    let mut file = File::create(format!("plk {thread} threads.txt")).unwrap();
 
-    for nv in 4..15 {
+    for nv in 4..16 {
         let srs = Kzg::gen_srs_for_testing(&mut rng, nv + 1)?;
         let (pcs_param, _) = Kzg::trim(&srs, None, Some(nv + 1))?;
 
@@ -427,11 +434,13 @@ fn bench_plookup_check() -> Result<(), PolyIOPErrors> {
                     &mut transcript,
                 )?;
             }
+            let proving = start.elapsed().as_nanos() / repetition as u128;
             println!(
                 "plookup check proving time for {} variables: {} ns",
-                nv,
-                start.elapsed().as_nanos() / repetition as u128
+                nv, proving
             );
+            file.write_all(format!("{} {}\n", nv, proving).as_ref())
+                .unwrap();
             let mut transcript = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::init_transcript();
             transcript.append_message(b"testing", b"initializing transcript for testing")?;
             let (proof, _, _, _, _) = <PolyIOP<Fr> as PlookupCheck<Bls12_381, Kzg>>::prove(

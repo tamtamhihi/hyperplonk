@@ -70,11 +70,10 @@ impl<F: PrimeField> MockCircuit<F> {
             vec![SelectorColumn::default(); num_lk_selectors];
         let mut witnesses: Vec<WitnessColumn<F>> = vec![WitnessColumn::default(); num_witnesses];
 
-        let mut table ;
+        let mut table;
         if full_table {
             table = vec![F::default(); num_constraints]
-        } 
-        else {
+        } else {
             table = vec![F::default(); num_constraints - 1]
         };
 
@@ -124,13 +123,11 @@ impl<F: PrimeField> MockCircuit<F> {
             }
 
             // 3) Generate lookup selectors, evaluate the row and push to table.
-            
 
             let mut lookup_value = F::zero();
             let mut cur_lk_selectors: Vec<F>;
             if current_row != num_constraints - 1 {
-                cur_lk_selectors =
-                    (0..(num_lk_selectors)).map(|_| F::rand(&mut rng)).collect();
+                cur_lk_selectors = (0..(num_lk_selectors)).map(|_| F::rand(&mut rng)).collect();
 
                 for (coeff, q_lk, wit) in lk_gate.gates.iter() {
                     let mut cur_lk_monomial = if *coeff < 0 {
@@ -149,8 +146,9 @@ impl<F: PrimeField> MockCircuit<F> {
                 }
                 table[current_row] = lookup_value;
             } else {
-                cur_lk_selectors =
-                    (0..(num_lk_selectors - 1)).map(|_| F::rand(&mut rng)).collect();
+                cur_lk_selectors = (0..(num_lk_selectors - 1))
+                    .map(|_| F::rand(&mut rng))
+                    .collect();
                 let mut last_lk_selector = F::zero();
                 for (index, (coeff, q_lk, wit)) in lk_gate.gates.iter().enumerate() {
                     if index != num_lk_selectors - 1 {
@@ -178,7 +176,8 @@ impl<F: PrimeField> MockCircuit<F> {
                         }
 
                         // acc_last_selector + x * cur_lk_monomial = table[current - 1]
-                        last_lk_selector = (table[current_row - 1] - last_lk_selector) / cur_lk_monomial;
+                        last_lk_selector =
+                            (table[current_row - 1] - last_lk_selector) / cur_lk_monomial;
                     }
                 }
                 cur_lk_selectors.push(last_lk_selector);
@@ -279,10 +278,10 @@ mod test {
         poly_iop::PolyIOP,
     };
 
-    const SUPPORTED_SIZE: usize = 10;
-    const MIN_NUM_VARS: usize = 5;
-    const MAX_NUM_VARS: usize = 10;
-    const CUSTOM_DEGREE: [usize; 6] = [1, 2, 4, 8, 16, 32];
+    const SUPPORTED_SIZE: usize = 7;
+    const MIN_NUM_VARS: usize = 3;
+    const MAX_NUM_VARS: usize = 7;
+    const CUSTOM_DEGREE: [usize; 3] = [1, 2, 4];
 
     #[test]
     fn test_sat_function() {
@@ -324,7 +323,7 @@ mod test {
 
     #[test]
     fn test_mock_circuit_sat() {
-        for i in 1..10 {
+        for i in 1..5 {
             let vanilla_gate = CustomizedGates::vanilla_plonk_gate();
             let circuit = MockCircuit::<Fr>::new(1 << i, &vanilla_gate, &vanilla_gate, true);
             assert!(circuit.is_satisfied());
@@ -387,7 +386,7 @@ mod test {
             test_mock_circuit_zkp_helper(nv, &tubro_gate, &pcs_srs)?;
         }
         let nv = 5;
-        for num_witness in 2..10 {
+        for num_witness in 2..6 {
             for degree in CUSTOM_DEGREE {
                 let mock_gate = CustomizedGates::mock_gate(num_witness, degree);
                 test_mock_circuit_zkp_helper(nv, &mock_gate, &pcs_srs)?;

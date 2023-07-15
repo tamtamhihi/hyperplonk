@@ -130,16 +130,29 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// Convert virtual polynomial to MLE
     pub fn to_mle(&self) -> Result<Arc<DenseMultilinearExtension<F>>, ArithErrors> {
         let num_vars = self.aux_info.num_variables;
+        let mle_evaluations = self
+            .flattened_ml_extensions
+            .par_iter()
+            .map(|mle| &mle.evaluations)
+            .collect::<Vec<_>>();
+        let products = &self.products;
 
         let evaluations = (0..1 << num_vars)
-            .map(|num| {
-                let point = bit_decompose(num, num_vars)
-                    .iter()
-                    .map(|b| if *b { F::one() } else { F::zero() })
-                    .collect::<Vec<_>>();
-                self.evaluate(&point)
+            .collect::<Vec<_>>()
+            .par_iter()
+            .map(|i| {
+                products
+                    .par_iter()
+                    .map(|(coeff, mles)| -> F {
+                        *coeff
+                            * mles
+                                .par_iter()
+                                .map(|mle| mle_evaluations[*mle][*i])
+                                .product::<F>()
+                    })
+                    .sum::<F>()
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
 
         Ok(Arc::new(DenseMultilinearExtension::from_evaluations_vec(
             num_vars,
@@ -574,7 +587,7 @@ mod test {
         let mut rng = test_rng();
 
         for nv in 1..10 {
-            for num_products in 2..10 {
+            for num_products in 2..20 {
                 let (vp, vp_sum) =
                     VirtualPolynomial::<Fr>::rand(nv, (3, 7), num_products, &mut rng)?;
 

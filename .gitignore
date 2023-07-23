@@ -11,6 +11,8 @@ default.profraw
 
 /program
 
+*.png
+
 ## Images (binaries)
 images/output/*.png
 

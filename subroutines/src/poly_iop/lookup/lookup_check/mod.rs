@@ -11,6 +11,7 @@ mod util;
 use self::util::*;
 use super::structs::LogaPreprocessedTable;
 
+/// Implementation of Logalookup
 pub trait LookupCheck<E, PCS>: ZeroCheck<E::ScalarField>
 where
     E: Pairing,

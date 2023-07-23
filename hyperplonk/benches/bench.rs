@@ -21,9 +21,9 @@ use subroutines::{
     poly_iop::PolyIOP,
 };
 
-const SUPPORTED_SIZE: usize = 16;
-const MIN_NUM_VARS: usize = 5;
-const MAX_NUM_VARS: usize = 15;
+const SUPPORTED_SIZE: usize = 18;
+const MIN_NUM_VARS: usize = 7;
+const MAX_NUM_VARS: usize = 17;
 const MIN_CUSTOM_DEGREE: usize = 1;
 const MAX_CUSTOM_DEGREE: usize = 32;
 const HIGH_DEGREE_TEST_NV: usize = 10;
@@ -134,9 +134,9 @@ fn bench_mock_circuit_zkp_helper_with_loga_lk(
     pcs_srs: &MultilinearUniversalParams<Bls12_381>,
 ) -> Result<(), HyperPlonkErrors> {
     let repetition = if nv < 10 {
-        5
+        10
     } else if nv < 20 {
-        3
+        5
     } else {
         1
     };
@@ -204,9 +204,9 @@ fn bench_mock_circuit_zkp_helper_with_plk(
     pcs_srs: &MultilinearUniversalParams<Bls12_381>,
 ) -> Result<(), HyperPlonkErrors> {
     let repetition = if nv < 10 {
-        5
+        10
     } else if nv < 20 {
-        3
+        5
     } else {
         1
     };

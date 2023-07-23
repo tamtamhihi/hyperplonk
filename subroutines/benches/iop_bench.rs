@@ -289,7 +289,7 @@ fn bench_lookup_check() -> Result<(), PolyIOPErrors> {
     let thread = rayon::current_num_threads();
     let mut file = File::create(format!("logalk {thread} threads.txt")).unwrap();
 
-    for nv in 4..16 {
+    for nv in 7..18 {
         let srs = Kzg::gen_srs_for_testing(&mut rng, nv + 1)?;
         let (pcs_param, _) = Kzg::trim(&srs, None, Some(nv + 1))?;
 
@@ -391,14 +391,14 @@ fn bench_plookup_check() -> Result<(), PolyIOPErrors> {
     let thread = rayon::current_num_threads();
     let mut file = File::create(format!("plk {thread} threads.txt")).unwrap();
 
-    for nv in 4..16 {
+    for nv in 7..18 {
         let srs = Kzg::gen_srs_for_testing(&mut rng, nv + 1)?;
         let (pcs_param, _) = Kzg::trim(&srs, None, Some(nv + 1))?;
 
         let repetition = if nv < 10 {
-            5
+            10
         } else if nv < 20 {
-            2
+            5
         } else {
             1
         };
